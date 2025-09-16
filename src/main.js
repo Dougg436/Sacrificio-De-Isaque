@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 import { player, drawPlayer } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
@@ -77,3 +78,6 @@ canvas.addEventListener('mousedown', e => {
 });
 
 playerImg.onload = () => update();
+=======
+// inicialização do jogo, loop principal
+>>>>>>> Stashed changes

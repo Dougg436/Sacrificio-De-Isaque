@@ -1,4 +1,5 @@
 // entidade player
+<<<<<<< Updated upstream
 export let player = {
 	size: 50,
 	x: 0, // será inicializado no main.js
@@ -16,3 +17,5 @@ export function drawPlayer(ctx, mouseX, mouseY) {
 	ctx.drawImage(player.img, -player.size/2, -player.size/2, player.size, player.size);
 	ctx.restore();
 }
+=======
+>>>>>>> Stashed changes
