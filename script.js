@@ -1,23 +1,27 @@
 var canvas = document.getElementById('gameScreen');
 var ctx = canvas.getContext('2d');
-
+// Player Definition
 var playerSize = 50;
 var x = (canvas.width - playerSize) / 2;
 var y = (canvas.height - playerSize) / 2;
 var pSpeed = 4;
 var pDamage = 1;
 
+// Controls
 var keys = {};
 var mouseX = x, mouseY = y;
 
+// Images
 var playerImg = new Image();
 var bulletImg = new Image();
 playerImg.src = "images/player.png"; 
 bulletImg.src = "images/laser.png";
 
+// Arrays
 var bullets = [];
 var powerUps = [];
 
+// Functions
 function drawPlayer() {
     ctx.save();
     ctx.translate(x + playerSize/2, y + playerSize/2);
@@ -43,6 +47,7 @@ function spawnPowerUp(px, py) {
     });
 }
 
+// Update / frame
 function update() {
     for (let key in keys) {
         if (keys[key]) {
@@ -84,6 +89,8 @@ function update() {
     drawPlayer();
     requestAnimationFrame(update);
 }
+
+// Functions for Input/Output
 
 canvas.addEventListener('mousemove', e => {
     let rect = canvas.getBoundingClientRect();
