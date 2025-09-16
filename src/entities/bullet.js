@@ -1,5 +1,4 @@
 // entidade bullet
-<<<<<<< Updated upstream
 export function createBullet(x, y, angle, speed, size, damage) {
 	return {
 		x,
@@ -10,5 +9,3 @@ export function createBullet(x, y, angle, speed, size, damage) {
 		damage
 	};
 }
-=======
->>>>>>> Stashed changes
