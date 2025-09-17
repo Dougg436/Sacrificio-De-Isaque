@@ -3,7 +3,6 @@
 // Geração procedural simples de masmorra tipo Binding of Isaac
 // Usa random walk em grid, seedable RNG e garante conectividade.
 // Retorna um objeto {grid, rooms, start, boss, width, height}
-import { drawDungeonCanvas } from '../utils/helpers.js';
 
 export function mulberry32(seed) {
   // seed -> RNG function returning [0,1)
