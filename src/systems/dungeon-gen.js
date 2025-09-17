@@ -230,7 +230,7 @@ export function generateDungeon({
     const enemyChance = r.type === 'treasure' ? 0.25 : (r.type === 'boss' ? 1 : 0.6);
     if (rand() < enemyChance) {
       // simples: definir quantidade e tipo por seed
-      const qty = r.type === 'boss' ? 1 : (Math.random() < 0.5 ? 1 : 2);
+      const qty = r.type === 'boss' ? 1 : (rand() < 0.5 ? 1 : 2);
       for (let i=0;i<qty;i++) r.enemies.push({type: r.type === 'boss' ? 'boss' : 'fly', hp: r.type === 'boss' ? 50 : 5});
     }
     // itens
