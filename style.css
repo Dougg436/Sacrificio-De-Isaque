@@ -6,3 +6,8 @@ body {
     color: #fff;
     font-family: Arial, sans-serif;
 }
+canvas {
+    width: 100vw;
+    height: 100vh;
+    display: block;
+}
