@@ -20,7 +20,7 @@ const dungeon = generateDungeon({
 
 // Estado do jogo
 let currentRoom = dungeon.start;
-let gameState = 'playing'; // 'playing', 'transition', 'victory'
+let gameState = 'playing'; // 'playing', 'transition', 'victory', 'paused'
 let currentFloor = 1;
 let bossDefeated = false;
 let trapdoorSpawned = false;
@@ -37,6 +37,15 @@ player.img = playerImg;
 let bullets = [];
 let powerUps = [];
 let enemies = [];
+
+// Estado do menu de pausa
+let pauseMenuSelectedOption = 0; // 0 = Continuar, 1 = Reiniciar, 2 = Menu Principal
+const pauseMenuOptions = ['Continuar', 'Reiniciar', 'Menu Principal'];
+let escKeyPressed = false; // Para evitar toggle múltiplo
+
+// Sistema de FPS
+let lastFrameTime = Date.now();
+let deltaTime = 0;
 
 setupKeyboard();
 setupMouse(canvas);
@@ -130,6 +139,80 @@ function spawnPowerUp(px, py) {
 	powerup.color = powerupType.color; // Adicionar cor para renderização
 	powerup.name = powerupType.name; // Adicionar nome
 	powerUps.push(powerup);
+}
+
+// Funções do Menu de Pausa
+function drawPauseMenu() {
+	// Escurecer o fundo
+	ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+	ctx.fillRect(0, 0, canvas.width, canvas.height);
+	
+	// Título do menu
+	ctx.font = 'bold 60px Arial';
+	ctx.fillStyle = '#fff';
+	ctx.textAlign = 'center';
+	ctx.fillText('PAUSADO', canvas.width / 2, 150);
+	
+	// Opções do menu
+	ctx.font = '40px Arial';
+	pauseMenuOptions.forEach((option, index) => {
+		const y = 280 + index * 80;
+		
+		// Destacar opção selecionada
+		if (index === pauseMenuSelectedOption) {
+			ctx.fillStyle = '#FFD700'; // Dourado
+			ctx.fillText('> ' + option + ' <', canvas.width / 2, y);
+		} else {
+			ctx.fillStyle = '#fff';
+			ctx.fillText(option, canvas.width / 2, y);
+		}
+	});
+	
+	// Instruções
+	ctx.font = '20px Arial';
+	ctx.fillStyle = '#aaa';
+	ctx.fillText('Use W/S ou ↑/↓ para navegar', canvas.width / 2, canvas.height - 80);
+	ctx.fillText('Enter para selecionar | ESC para voltar', canvas.width / 2, canvas.height - 50);
+}
+
+function handlePauseMenuInput() {
+	// Prevenir uso de W/S para movimento quando pausado
+	const currentTime = Date.now();
+	
+	// Navegar para cima
+	if ((keys['w'] || keys['W'] || keys['ArrowUp']) && (!keys['lastNavigateTime'] || currentTime - keys['lastNavigateTime'] > 200)) {
+		pauseMenuSelectedOption = (pauseMenuSelectedOption - 1 + pauseMenuOptions.length) % pauseMenuOptions.length;
+		keys['lastNavigateTime'] = currentTime;
+	} 
+	// Navegar para baixo
+	else if ((keys['s'] || keys['S'] || keys['ArrowDown']) && (!keys['lastNavigateTime'] || currentTime - keys['lastNavigateTime'] > 200)) {
+		pauseMenuSelectedOption = (pauseMenuSelectedOption + 1) % pauseMenuOptions.length;
+		keys['lastNavigateTime'] = currentTime;
+	}
+	
+	// Selecionar opção
+	if (keys['Enter']) {
+		if (!keys['enterPressed']) {
+			keys['enterPressed'] = true;
+			executePauseMenuOption();
+		}
+	} else {
+		keys['enterPressed'] = false;
+	}
+}
+
+function executePauseMenuOption() {
+	switch (pauseMenuSelectedOption) {
+		case 0: // Continuar
+			gameState = 'playing';
+			break;
+		case 1: // Reiniciar
+			location.reload(); // Recarregar a página para reiniciar
+			break;
+		case 2: // Menu Principal
+			window.location.href = 'index.html'; // Voltar para o menu principal
+			break;
+	}
 }
 
 // Verificar colisões com paredes e limitar movimento
@@ -382,6 +465,29 @@ function drawHealth() {
 		ctx.lineWidth = 2;
 		drawHeartOutline(ctx, x, y, heartSize);
 	}
+	
+	// Mostrar stats do player
+	ctx.font = '16px Arial';
+	ctx.textAlign = 'left';
+	ctx.fillStyle = '#fff';
+	ctx.strokeStyle = '#000';
+	ctx.lineWidth = 3;
+	
+	const statsX = startX;
+	const statsY = startY + heartSize + 20;
+	
+	// Dano
+	ctx.strokeText(`⚔️ Dano: ${player.damage}`, statsX, statsY);
+	ctx.fillText(`⚔️ Dano: ${player.damage}`, statsX, statsY);
+	
+	// Velocidade
+	ctx.strokeText(`🏃 Speed: ${player.speed.toFixed(1)}`, statsX, statsY + 20);
+	ctx.fillText(`🏃 Speed: ${player.speed.toFixed(1)}`, statsX, statsY + 20);
+	
+	// Fire Rate (converter para tiros por segundo)
+	const shotsPerSecond = (1000 / player.fireRate).toFixed(1);
+	ctx.strokeText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
+	ctx.fillText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
 }
 
 function drawHeart(ctx, x, y, size, full) {
@@ -489,6 +595,76 @@ function goToNextFloor() {
 }
 
 function update() {
+	// Calcular deltaTime
+	const currentTime = Date.now();
+	deltaTime = (currentTime - lastFrameTime) / 1000; // Converter para segundos
+	lastFrameTime = currentTime;
+	
+	// Limitar deltaTime para evitar saltos grandes (ex: quando tab fica inativa)
+	if (deltaTime > 0.1) deltaTime = 0.1;
+	
+	// Verificar tecla ESC para pausar/despausar
+	if (keys['Escape'] || keys['Esc']) {
+		if (!escKeyPressed) {
+			escKeyPressed = true;
+			if (gameState === 'playing') {
+				gameState = 'paused';
+				pauseMenuSelectedOption = 0; // Reset para primeira opção
+				console.log('Jogo pausado');
+			} else if (gameState === 'paused') {
+				gameState = 'playing';
+				console.log('Jogo despausado');
+			}
+		}
+	} else {
+		escKeyPressed = false;
+	}
+	
+	// Se o jogo está pausado, mostrar menu e processar input do menu
+	if (gameState === 'paused') {
+		handlePauseMenuInput();
+		
+		// Redesenhar a tela de jogo congelada
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		drawRoom();
+		
+		// Desenhar inimigos
+		enemies.forEach(enemy => drawEnemy(ctx, enemy));
+		
+		// Desenhar bullets
+		bullets.forEach(bullet => {
+			ctx.drawImage(bullet.img, bullet.x - bullet.size/2, bullet.y - bullet.size/2, bullet.size, bullet.size);
+		});
+		
+		// Desenhar powerups
+		powerUps.forEach(p => {
+			if (p.color) {
+				ctx.fillStyle = p.color;
+				ctx.beginPath();
+				ctx.arc(p.x, p.y, p.size/2, 0, Math.PI * 2);
+				ctx.fill();
+				ctx.strokeStyle = '#000';
+				ctx.lineWidth = 3;
+				ctx.stroke();
+			} else {
+				ctx.drawImage(p.img, p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+			}
+		});
+		
+		// Desenhar player
+		drawPlayer(ctx, mouseX, mouseY);
+		
+		// Desenhar HUD
+		drawHealth();
+		drawMinimap();
+		
+		// Desenhar menu de pausa por cima
+		drawPauseMenu();
+		
+		requestAnimationFrame(update);
+		return; // Não processar resto do update
+	}
+	
 	// Atualizar player (invulnerabilidade, etc)
 	updatePlayer();
 	

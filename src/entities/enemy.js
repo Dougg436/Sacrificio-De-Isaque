@@ -50,6 +50,7 @@ export function createEnemy(x, y, type = 'fly') {
 		behavior: template.behavior,
 		shootCooldown: template.shootCooldown,
 		shootInterval: template.shootInterval,
+		lastShotTime: Date.now(), // Timestamp do último tiro
 		vx: 0,
 		vy: 0,
 		wanderTimer: 0,
@@ -78,6 +79,7 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 	
 	// Preparar para atirar
 	let shouldShoot = false;
+	const now = Date.now();
 	
 	if (enemy.behavior === 'chase') {
 		// Perseguir o player
@@ -86,9 +88,9 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 			enemy.vy = (dy / distance) * enemy.speed;
 		}
 		// Fly também atira enquanto persegue
-		if (enemy.shootCooldown <= 0 && distance < 350) {
+		if (now - enemy.lastShotTime >= enemy.shootInterval && distance < 350) {
 			shouldShoot = true;
-			enemy.shootCooldown = enemy.shootInterval;
+			enemy.lastShotTime = now;
 		}
 	} else if (enemy.behavior === 'wander') {
 		// Movimento aleatório
@@ -101,9 +103,9 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 		enemy.wanderTimer--;
 		
 		// Spider atira periodicamente
-		if (enemy.shootCooldown <= 0 && distance < 400) {
+		if (now - enemy.lastShotTime >= enemy.shootInterval && distance < 400) {
 			shouldShoot = true;
-			enemy.shootCooldown = enemy.shootInterval;
+			enemy.lastShotTime = now;
 		}
 	} else if (enemy.behavior === 'shoot') {
 		// Ficar parado ou mover devagar
@@ -111,9 +113,9 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 		enemy.vy *= 0.9;
 		
 		// Verificar se pode atirar
-		if (enemy.shootCooldown <= 0 && distance < 450) {
+		if (now - enemy.lastShotTime >= enemy.shootInterval && distance < 450) {
 			shouldShoot = true;
-			enemy.shootCooldown = enemy.shootInterval;
+			enemy.lastShotTime = now;
 		}
 	}
 	
@@ -127,10 +129,7 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 	if (enemy.y < wallThickness) enemy.y = wallThickness;
 	if (enemy.y + enemy.size > roomHeight - wallThickness) enemy.y = roomHeight - wallThickness - enemy.size;
 	
-	// Atualizar cooldown de tiro
-	if (enemy.shootCooldown > 0) {
-		enemy.shootCooldown -= 16; // ~60fps
-	}
+	// Não precisa mais atualizar cooldown aqui - usando timestamp
 	
 	return { distance, dx, dy, shouldShoot };
 }
