@@ -1,6 +1,65 @@
 // entidade inimigo
 import { ENEMY_SPAWN_DELAY } from '../config.js';
 
+/**
+ * Calcula o ângulo preditivo considerando a velocidade do alvo
+ * @param {number} ex - posição X do atirador
+ * @param {number} ey - posição Y do atirador
+ * @param {number} px - posição X do alvo
+ * @param {number} py - posição Y do alvo
+ * @param {number} vx - velocidade X do alvo
+ * @param {number} vy - velocidade Y do alvo
+ * @param {number} bulletSpeed - velocidade do projétil
+ * @returns {number} ângulo de tiro em radianos
+ */
+export function calculatePredictiveAngle(ex, ey, px, py, vx, vy, bulletSpeed) {
+	// Posição relativa do alvo
+	const dx = px - ex;
+	const dy = py - ey;
+	
+	// Se o alvo está parado, usar ângulo direto
+	if (vx === 0 && vy === 0) {
+		return Math.atan2(dy, dx);
+	}
+	
+	// Equação quadrática para interceptação
+	// Baseado em: https://stackoverflow.com/questions/2248876/2d-game-fire-at-a-moving-target-by-predicting-intersection-of-projectile-and-u
+	
+	const a = vx * vx + vy * vy - bulletSpeed * bulletSpeed;
+	const b = 2 * (vx * dx + vy * dy);
+	const c = dx * dx + dy * dy;
+	
+	const discriminant = b * b - 4 * a * c;
+	
+	// Se não há solução (alvo muito rápido), mirar na posição atual
+	if (discriminant < 0) {
+		return Math.atan2(dy, dx);
+	}
+	
+	// Calcular tempo de interceptação (usar a solução menor/mais rápida)
+	const t1 = (-b - Math.sqrt(discriminant)) / (2 * a);
+	const t2 = (-b + Math.sqrt(discriminant)) / (2 * a);
+	
+	let t;
+	if (t1 > 0 && t2 > 0) {
+		t = Math.min(t1, t2);
+	} else if (t1 > 0) {
+		t = t1;
+	} else if (t2 > 0) {
+		t = t2;
+	} else {
+		// Nenhuma solução positiva, mirar na posição atual
+		return Math.atan2(dy, dx);
+	}
+	
+	// Calcular posição futura do alvo
+	const futureX = px + vx * t;
+	const futureY = py + vy * t;
+	
+	// Retornar ângulo para a posição futura
+	return Math.atan2(futureY - ey, futureX - ex);
+}
+
 export function createEnemy(x, y, type = 'fly') {
 	const enemyTypes = {
 		fly: {
@@ -11,7 +70,8 @@ export function createEnemy(x, y, type = 'fly') {
 			color: '#8B4513',
 			behavior: 'chase', // chase, wander, shoot
 			shootCooldown: 0,
-			shootInterval: 3000 // atira a cada 3 segundos
+			shootInterval: 3000, // atira a cada 3 segundos
+			aimAccuracy: 0.8 // 80% de precisão na mira preditiva (0.0 = sem predição, 1.0 = predição perfeita)
 		},
 		spider: {
 			size: 35,
@@ -21,7 +81,8 @@ export function createEnemy(x, y, type = 'fly') {
 			color: '#4B0082',
 			behavior: 'wander',
 			shootCooldown: 0,
-			shootInterval: 4000 // atira a cada 4 segundos
+			shootInterval: 4000, // atira a cada 4 segundos
+			aimAccuracy: 0.6 // 60% de precisão (mira pior)
 		},
 		shooter: {
 			size: 32,
@@ -31,7 +92,8 @@ export function createEnemy(x, y, type = 'fly') {
 			color: '#DC143C',
 			behavior: 'shoot',
 			shootCooldown: 0,
-			shootInterval: 2500 // atira a cada 2.5 segundos (mais rápido)
+			shootInterval: 2500, // atira a cada 2.5 segundos (mais rápido)
+			aimAccuracy: 0.95 // 95% de precisão (atirador expert)
 		}
 	};
 	
@@ -50,6 +112,7 @@ export function createEnemy(x, y, type = 'fly') {
 		behavior: template.behavior,
 		shootCooldown: template.shootCooldown,
 		shootInterval: template.shootInterval,
+		aimAccuracy: template.aimAccuracy,
 		lastShotTime: Date.now(), // Timestamp do último tiro
 		vx: 0,
 		vy: 0,
@@ -131,7 +194,18 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 	
 	// Não precisa mais atualizar cooldown aqui - usando timestamp
 	
-	return { distance, dx, dy, shouldShoot };
+	return { 
+		distance, 
+		dx, 
+		dy, 
+		shouldShoot,
+		// Retornar posição e velocidade do player para cálculo preditivo
+		playerX: player.x + player.size/2,
+		playerY: player.y + player.size/2,
+		playerVelocityX: player.velocityX || 0,
+		playerVelocityY: player.velocityY || 0,
+		aimAccuracy: enemy.aimAccuracy // precisão da mira do inimigo
+	};
 }
 
 export function drawEnemy(ctx, enemy) {

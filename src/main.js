@@ -1,7 +1,7 @@
 import { player, drawPlayer, takeDamage, updatePlayer, canShoot } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
-import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy } from './entities/enemy.js';
+import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculatePredictiveAngle } from './entities/enemy.js';
 import { keys, setupKeyboard, mouseX, mouseY, setupMouse } from './core/input.js';
 import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
@@ -32,6 +32,8 @@ const roomHeight = canvas.height;
 // Inicialização player na sala inicial
 player.x = roomWidth / 2 - player.size / 2;
 player.y = roomHeight / 2 - player.size / 2;
+player.previousX = player.x; // Inicializar posição anterior para cálculo de velocidade
+player.previousY = player.y;
 player.img = playerImg;
 
 let bullets = [];
@@ -824,6 +826,10 @@ function goToNextFloor() {
 	// Reposicionar player no centro da nova sala inicial
 	player.x = roomWidth / 2 - player.size / 2;
 	player.y = roomHeight / 2 - player.size / 2;
+	player.previousX = player.x; // Reset velocidade
+	player.previousY = player.y;
+	player.velocityX = 0;
+	player.velocityY = 0;
 	
 	// Spawnar conteúdo da nova sala
 	spawnRoomEnemies();
@@ -974,14 +980,42 @@ function update() {
 		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
 		drawEnemy(ctx, enemy);
 		
-		// Inimigo atira no player
+		// Inimigo atira no player com mira preditiva
 		if (updateResult && updateResult.shouldShoot) {
-			const angle = Math.atan2(updateResult.dy, updateResult.dx);
+			const bulletSpeed = 6;
+			
+			// Calcular ângulo preditivo baseado na velocidade do player
+			const predictiveAngle = calculatePredictiveAngle(
+				enemy.x + enemy.size/2,  // posição X do inimigo
+				enemy.y + enemy.size/2,  // posição Y do inimigo
+				updateResult.playerX,    // posição X do player
+				updateResult.playerY,    // posição Y do player
+				updateResult.playerVelocityX, // velocidade X do player
+				updateResult.playerVelocityY, // velocidade Y do player
+				bulletSpeed              // velocidade do projétil
+			);
+			
+			// Calcular ângulo direto (sem predição)
+			const directAngle = Math.atan2(updateResult.dy, updateResult.dx);
+			
+			// Interpolar entre ângulo direto e preditivo baseado na precisão do inimigo
+			// aimAccuracy = 0.0 -> usa apenas ângulo direto (sem predição)
+			// aimAccuracy = 1.0 -> usa apenas ângulo preditivo (predição perfeita)
+			const accuracy = updateResult.aimAccuracy || 0.5;
+			
+			// Interpolar os ângulos (considerando que ângulos podem cruzar 0/2π)
+			let angleDiff = predictiveAngle - directAngle;
+			// Normalizar diferença de ângulo para -π a π
+			while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+			while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+			
+			const finalAngle = directAngle + angleDiff * accuracy;
+			
 			const bullet = createBullet(
 				enemy.x + enemy.size/2,
 				enemy.y + enemy.size/2,
-				angle,
-				6, // velocidade do tiro do inimigo
+				finalAngle,
+				bulletSpeed, // velocidade do tiro do inimigo
 				20, // tamanho menor para tiros de inimigos
 				enemy.damage,
 				true // marcar como tiro de inimigo

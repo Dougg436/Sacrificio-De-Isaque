@@ -13,7 +13,29 @@ export let player = {
 	invulnerable: false,
 	invulnerableTime: 0,
 	fireRate: BASE_FIRE_RATE, // Taxa de tiro em ms
-	lastShotTime: 0 // Timestamp do último tiro
+	lastShotTime: 0, // Timestamp do último tiro
+	// Sistema avançado de rastreamento de movimento
+	previousX: 0,
+	previousY: 0,
+	velocityX: 0,
+	velocityY: 0,
+	previousVelocityX: 0,
+	previousVelocityY: 0,
+	accelerationX: 0,
+	accelerationY: 0,
+	// Histórico de movimento para análise de padrões (últimos 30 frames)
+	movementHistory: [],
+	maxHistorySize: 30,
+	// Padrões detectados
+	isCircling: false,
+	isZigzagging: false,
+	isStrafeRunning: false,
+	movementPattern: 'random', // 'random', 'circular', 'zigzag', 'strafe', 'straight'
+	patternConfidence: 0, // 0-1, confiança no padrão detectado
+	// Estatísticas de movimento
+	averageSpeed: 0,
+	directionChanges: 0,
+	lastDirectionChange: 0
 };
 
 export function drawPlayer(ctx, mouseX, mouseY) {
@@ -41,6 +63,12 @@ export function takeDamage(amount) {
 }
 
 export function updatePlayer() {
+	// Calcular velocidade para mira preditiva dos inimigos
+	player.velocityX = player.x - player.previousX;
+	player.velocityY = player.y - player.previousY;
+	player.previousX = player.x;
+	player.previousY = player.y;
+	
 	// Atualizar invulnerabilidade
 	if (player.invulnerable && Date.now() > player.invulnerableTime) {
 		player.invulnerable = false;
