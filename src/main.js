@@ -42,6 +42,7 @@ let enemies = [];
 let pauseMenuSelectedOption = 0; // 0 = Continuar, 1 = Reiniciar, 2 = Menu Principal
 const pauseMenuOptions = ['Continuar', 'Reiniciar', 'Menu Principal'];
 let escKeyPressed = false; // Para evitar toggle múltiplo
+let lastEscPressTime = 0; // Timestamp do último ESC pressionado
 
 // Sistema de FPS
 let lastFrameTime = Date.now();
@@ -220,39 +221,58 @@ function spawnPowerUp(px, py) {
 
 // Funções do Menu de Pausa
 function drawPauseMenu() {
-	// Escurecer o fundo
-	ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-	ctx.fillRect(0, 0, canvas.width, canvas.height);
-	
-	// Título do menu
-	ctx.font = 'bold 60px Arial';
-	ctx.fillStyle = '#fff';
-	ctx.textAlign = 'center';
-	ctx.fillText('PAUSADO', canvas.width / 2, 150);
-	
-	// Opções do menu
-	ctx.font = '40px Arial';
-	pauseMenuOptions.forEach((option, index) => {
-		const y = 280 + index * 80;
+	try {
+		// Escurecer o fundo
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
 		
-		// Destacar opção selecionada
-		if (index === pauseMenuSelectedOption) {
-			ctx.fillStyle = '#FFD700'; // Dourado
-			ctx.fillText('> ' + option + ' <', canvas.width / 2, y);
-		} else {
-			ctx.fillStyle = '#fff';
-			ctx.fillText(option, canvas.width / 2, y);
-		}
-	});
-	
-	// Instruções
-	ctx.font = '20px Arial';
-	ctx.fillStyle = '#aaa';
-	ctx.fillText('Use W/S ou ↑/↓ para navegar', canvas.width / 2, canvas.height - 80);
-	ctx.fillText('Enter para selecionar | ESC para voltar', canvas.width / 2, canvas.height - 50);
+		// Título do menu
+		ctx.font = 'bold 60px Arial';
+		ctx.fillStyle = '#fff';
+		ctx.textAlign = 'center';
+		ctx.fillText('PAUSADO', canvas.width / 2, 150);
+		
+		// Opções do menu
+		ctx.font = '40px Arial';
+		pauseMenuOptions.forEach((option, index) => {
+			const y = 280 + index * 80;
+			
+			// Destacar opção selecionada
+			if (index === pauseMenuSelectedOption) {
+				ctx.fillStyle = '#FFD700'; // Dourado
+				ctx.fillText('> ' + option + ' <', canvas.width / 2, y);
+			} else {
+				ctx.fillStyle = '#fff';
+				ctx.fillText(option, canvas.width / 2, y);
+			}
+		});
+		
+		// Instruções
+		ctx.font = '20px Arial';
+		ctx.fillStyle = '#aaa';
+		ctx.fillText('Use W/S ou ↑/↓ para navegar', canvas.width / 2, canvas.height - 80);
+		ctx.fillText('Enter para selecionar | ESC para voltar', canvas.width / 2, canvas.height - 50);
+	} catch (error) {
+		console.error('Erro ao desenhar menu de pausa:', error);
+		// Fallback: mostrar menu simples
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		ctx.fillStyle = '#fff';
+		ctx.font = '40px Arial';
+		ctx.textAlign = 'center';
+		ctx.fillText('PAUSADO', canvas.width / 2, canvas.height / 2);
+		ctx.font = '20px Arial';
+		ctx.fillText('Pressione ESC para continuar', canvas.width / 2, canvas.height / 2 + 50);
+	}
 }
 
 function handlePauseMenuInput() {
+	// Proteção: garantir que estamos realmente no estado pausado
+	if (gameState !== 'paused') {
+		console.warn('handlePauseMenuInput chamado fora do estado pausado');
+		return;
+	}
+	
 	// Prevenir uso de W/S para movimento quando pausado
 	const currentTime = Date.now();
 	
@@ -260,17 +280,20 @@ function handlePauseMenuInput() {
 	if ((keys['w'] || keys['W'] || keys['ArrowUp']) && (!keys['lastNavigateTime'] || currentTime - keys['lastNavigateTime'] > 200)) {
 		pauseMenuSelectedOption = (pauseMenuSelectedOption - 1 + pauseMenuOptions.length) % pauseMenuOptions.length;
 		keys['lastNavigateTime'] = currentTime;
+		console.log('Menu: navegou para opção', pauseMenuSelectedOption);
 	} 
 	// Navegar para baixo
 	else if ((keys['s'] || keys['S'] || keys['ArrowDown']) && (!keys['lastNavigateTime'] || currentTime - keys['lastNavigateTime'] > 200)) {
 		pauseMenuSelectedOption = (pauseMenuSelectedOption + 1) % pauseMenuOptions.length;
 		keys['lastNavigateTime'] = currentTime;
+		console.log('Menu: navegou para opção', pauseMenuSelectedOption);
 	}
 	
 	// Selecionar opção
 	if (keys['Enter']) {
 		if (!keys['enterPressed']) {
 			keys['enterPressed'] = true;
+			console.log('Menu: selecionou opção', pauseMenuSelectedOption);
 			executePauseMenuOption();
 		}
 	} else {
@@ -279,14 +302,19 @@ function handlePauseMenuInput() {
 }
 
 function executePauseMenuOption() {
+	console.log('Executando opção do menu:', pauseMenuSelectedOption, pauseMenuOptions[pauseMenuSelectedOption]);
+	
 	switch (pauseMenuSelectedOption) {
 		case 0: // Continuar
+			console.log('Continuando jogo...');
 			gameState = 'playing';
 			break;
 		case 1: // Reiniciar
+			console.log('Reiniciando jogo...');
 			location.reload(); // Recarregar a página para reiniciar
 			break;
 		case 2: // Menu Principal
+			console.log('Voltando ao menu principal...');
 			window.location.href = 'index.html'; // Voltar para o menu principal
 			break;
 	}
@@ -433,6 +461,14 @@ function checkRoomTransition() {
 
 // Desenhar sala atual
 function drawRoom() {
+	// Proteção: verificar se currentRoom existe
+	if (!currentRoom || !currentRoom.doors) {
+		console.error('drawRoom: currentRoom inválido', currentRoom);
+		ctx.fillStyle = '#000';
+		ctx.fillRect(0, 0, roomWidth, roomHeight);
+		return;
+	}
+	
 	// Fundo da sala baseado no tipo
 	if (currentRoom.type === 'start') ctx.fillStyle = '#2a4a4a';
 	else if (currentRoom.type === 'boss') ctx.fillStyle = '#4a2a2a';
@@ -805,14 +841,22 @@ function update() {
 	// Verificar tecla ESC para pausar/despausar
 	if (keys['Escape'] || keys['Esc']) {
 		if (!escKeyPressed) {
-			escKeyPressed = true;
-			if (gameState === 'playing') {
-				gameState = 'paused';
-				pauseMenuSelectedOption = 0; // Reset para primeira opção
-				console.log('Jogo pausado');
-			} else if (gameState === 'paused') {
-				gameState = 'playing';
-				console.log('Jogo despausado');
+			const currentTime = Date.now();
+			// Adicionar cooldown de 300ms para evitar múltiplos toggles
+			if (currentTime - lastEscPressTime > 300) {
+				escKeyPressed = true;
+				lastEscPressTime = currentTime;
+				
+				if (gameState === 'playing') {
+					console.log('Pausando jogo...');
+					gameState = 'paused';
+					pauseMenuSelectedOption = 0; // Reset para primeira opção
+					console.log('Jogo pausado - Estado:', gameState);
+				} else if (gameState === 'paused') {
+					console.log('Despausando jogo...');
+					gameState = 'playing';
+					console.log('Jogo despausado - Estado:', gameState);
+				}
 			}
 		}
 	} else {
@@ -823,42 +867,69 @@ function update() {
 	if (gameState === 'paused') {
 		handlePauseMenuInput();
 		
-		// Redesenhar a tela de jogo congelada
-		ctx.clearRect(0, 0, canvas.width, canvas.height);
-		drawRoom();
-		
-		// Desenhar inimigos
-		enemies.forEach(enemy => drawEnemy(ctx, enemy));
-		
-		// Desenhar bullets
-		bullets.forEach(bullet => {
-			ctx.drawImage(bullet.img, bullet.x - bullet.size/2, bullet.y - bullet.size/2, bullet.size, bullet.size);
-		});
-		
-		// Desenhar powerups
-		powerUps.forEach(p => {
-			if (p.color) {
-				ctx.fillStyle = p.color;
-				ctx.beginPath();
-				ctx.arc(p.x, p.y, p.size/2, 0, Math.PI * 2);
-				ctx.fill();
-				ctx.strokeStyle = '#000';
-				ctx.lineWidth = 3;
-				ctx.stroke();
-			} else {
-				ctx.drawImage(p.img, p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+		// Redesenhar a tela de jogo congelada de forma segura
+		try {
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			
+			// Verificar se currentRoom existe antes de desenhar
+			if (currentRoom) {
+				drawRoom();
 			}
-		});
-		
-		// Desenhar player
-		drawPlayer(ctx, mouseX, mouseY);
-		
-		// Desenhar HUD
-		drawHealth();
-		drawMinimap();
-		
-		// Desenhar menu de pausa por cima
-		drawPauseMenu();
+			
+			// Desenhar inimigos (verificar se array existe)
+			if (enemies && enemies.length > 0) {
+				enemies.forEach(enemy => {
+					if (enemy && !enemy.dead) {
+						drawEnemy(ctx, enemy);
+					}
+				});
+			}
+			
+			// Desenhar bullets (verificar se array existe)
+			if (bullets && bullets.length > 0) {
+				bullets.forEach(bullet => {
+					if (bullet && bullet.img) {
+						ctx.drawImage(bullet.img, bullet.x - bullet.size/2, bullet.y - bullet.size/2, bullet.size, bullet.size);
+					}
+				});
+			}
+			
+			// Desenhar powerups (verificar se array existe)
+			if (powerUps && powerUps.length > 0) {
+				powerUps.forEach(p => {
+					if (!p) return;
+					if (p.color) {
+						ctx.fillStyle = p.color;
+						ctx.beginPath();
+						ctx.arc(p.x, p.y, p.size/2, 0, Math.PI * 2);
+						ctx.fill();
+						ctx.strokeStyle = '#000';
+						ctx.lineWidth = 3;
+						ctx.stroke();
+					} else if (p.img) {
+						ctx.drawImage(p.img, p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+					}
+				});
+			}
+			
+			// Desenhar player (verificar se existe)
+			if (player && player.img) {
+				drawPlayer(ctx, mouseX, mouseY);
+			}
+			
+			// Desenhar HUD
+			drawHealth();
+			drawMinimap();
+			
+			// Desenhar menu de pausa por cima
+			drawPauseMenu();
+		} catch (error) {
+			console.error('Erro ao renderizar menu de pausa:', error);
+			// Em caso de erro, apenas mostrar o menu sem o fundo do jogo
+			ctx.fillStyle = '#000';
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			drawPauseMenu();
+		}
 		
 		requestAnimationFrame(update);
 		return; // Não processar resto do update
