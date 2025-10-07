@@ -1,9 +1,11 @@
-import { player, drawPlayer } from './entities/player.js';
+import { player, drawPlayer, takeDamage, updatePlayer, canShoot } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
+import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy } from './entities/enemy.js';
 import { keys, setupKeyboard, mouseX, mouseY, setupMouse } from './core/input.js';
 import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
+import { MIN_FIRE_RATE } from './config.js';
 
 const canvas = document.getElementById('gameScreen');
 const ctx = canvas.getContext('2d');
@@ -34,6 +36,7 @@ player.img = playerImg;
 
 let bullets = [];
 let powerUps = [];
+let enemies = [];
 
 setupKeyboard();
 setupMouse(canvas);
@@ -43,82 +46,196 @@ function spawnRoomEnemies() {
 	// Limpar arrays
 	bullets = [];
 	powerUps = [];
+	enemies = [];
 	
-	// Spawnar inimigos baseado na sala atual
-	if (currentRoom.enemies && currentRoom.enemies.length > 0) {
-		currentRoom.enemies.forEach(enemy => {
-			// Posição aleatória na sala
-			const x = Math.random() * (roomWidth - 100) + 50;
-			const y = Math.random() * (roomHeight - 100) + 50;
-			// Por enquanto, só criar power-ups onde estariam inimigos
-			spawnPowerUp(x, y);
-		});
+	// Verificar se a sala já foi limpa (cleared)
+	if (currentRoom.cleared) {
+		return; // Não spawnar inimigos em salas já limpas
 	}
 	
-	// Spawnar itens da sala
-	if (currentRoom.items && currentRoom.items.length > 0) {
-		currentRoom.items.forEach(item => {
-			const x = Math.random() * (roomWidth - 100) + 50;
-			const y = Math.random() * (roomHeight - 100) + 50;
+	// Spawnar inimigos baseado na sala atual
+	if (currentRoom.type !== 'start' && currentRoom.type !== 'treasure') {
+		const enemyCount = currentRoom.type === 'boss' ? 0 : Math.floor(Math.random() * 4) + 4; // 4-7 inimigos
+		const enemyTypes = ['fly', 'spider', 'shooter'];
+		
+		for (let i = 0; i < enemyCount; i++) {
+			const x = Math.random() * (roomWidth - 200) + 100;
+			const y = Math.random() * (roomHeight - 200) + 100;
+			const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+			enemies.push(createEnemy(x, y, type));
+		}
+	}
+	
+	// Spawnar powerups APENAS em salas de tesouro
+	if (currentRoom.type === 'treasure') {
+		if (currentRoom.items && currentRoom.items.length > 0) {
+			currentRoom.items.forEach(item => {
+				const x = Math.random() * (roomWidth - 100) + 50;
+				const y = Math.random() * (roomHeight - 100) + 50;
+				spawnPowerUp(x, y);
+			});
+		}
+		// Garantir pelo menos 1 powerup em salas de tesouro
+		if (powerUps.length === 0) {
+			const x = roomWidth / 2;
+			const y = roomHeight / 2;
 			spawnPowerUp(x, y);
-		});
+		}
 	}
 }
 
 function spawnPowerUp(px, py) {
-	powerUps.push(createPowerUp(px, py, bulletImg, () => player.damage += 1));
+	// Array de possíveis powerups
+	const powerupTypes = [
+		{
+			name: 'damage',
+			effect: () => {
+				player.damage += 1;
+				console.log('Dano aumentado! Novo dano:', player.damage);
+			},
+			color: '#FF0000' // vermelho
+		},
+		{
+			name: 'firerate',
+			effect: () => {
+				// Reduzir fire rate em 50ms (mais rápido), com limite mínimo
+				player.fireRate = Math.max(MIN_FIRE_RATE, player.fireRate - 50);
+				console.log('Fire rate aumentado! Novo fire rate:', player.fireRate, 'ms');
+			},
+			color: '#FFA500' // laranja
+		},
+		{
+			name: 'speed',
+			effect: () => {
+				player.speed += 0.5;
+				console.log('Velocidade aumentada! Nova velocidade:', player.speed);
+			},
+			color: '#00FF00' // verde
+		},
+		{
+			name: 'health',
+			effect: () => {
+				// Curar 2 de vida (1 coração)
+				player.health = Math.min(player.maxHealth, player.health + 2);
+				console.log('Vida recuperada! Vida atual:', player.health);
+			},
+			color: '#FF69B4' // rosa
+		}
+	];
+	
+	// Escolher powerup aleatório
+	const powerupType = powerupTypes[Math.floor(Math.random() * powerupTypes.length)];
+	
+	const powerup = createPowerUp(px, py, bulletImg, powerupType.effect);
+	powerup.color = powerupType.color; // Adicionar cor para renderização
+	powerup.name = powerupType.name; // Adicionar nome
+	powerUps.push(powerup);
 }
 
-// Verificar transição entre salas
+// Verificar colisões com paredes e limitar movimento
+function checkWallCollisions() {
+	const wallThickness = 20;
+	const doorSize = 80;
+	
+	// Parede Norte
+	if (player.y < wallThickness) {
+		if (!currentRoom.doors.N || 
+			player.x + player.size < (roomWidth - doorSize) / 2 || 
+			player.x > (roomWidth + doorSize) / 2) {
+			player.y = wallThickness;
+		} 
+	}
+	
+	// Parede Sul  
+	if (player.y + player.size > roomHeight - wallThickness) {
+		if (!currentRoom.doors.S || 
+			player.x + player.size < (roomWidth - doorSize) / 2 || 
+			player.x > (roomWidth + doorSize) / 2) {
+			player.y = roomHeight - wallThickness - player.size;
+		}
+	}
+	
+	// Parede Leste
+	if (player.x + player.size > roomWidth - wallThickness) {
+		if (!currentRoom.doors.E || 
+			player.y + player.size < (roomHeight - doorSize) / 2 || 
+			player.y > (roomHeight + doorSize) / 2) {
+			player.x = roomWidth - wallThickness - player.size;
+		}
+	}
+	
+	// Parede Oeste
+	if (player.x < wallThickness) {
+		if (!currentRoom.doors.W || 
+			player.y + player.size < (roomHeight - doorSize) / 2 || 
+			player.y > (roomHeight + doorSize) / 2) {
+			player.x = wallThickness;
+		}
+	}
+}
+
+// Verificar transição entre salas (apenas através das portas)
 function checkRoomTransition() {
-	const doorSize = 60;
-	const doorThickness = 20;
+	const wallThickness = 20;
+	const doorSize = 80;
 	
-	// Porta Norte
+	// Porta Norte - só transita se estiver dentro da área da porta
 	if (currentRoom.doors.N && player.y < 0) {
-		const newRoom = dungeon.grid[currentRoom.y - 1]?.[currentRoom.x];
-		if (newRoom) {
-			currentRoom = newRoom;
-			player.y = roomHeight - player.size - doorThickness;
-			spawnRoomEnemies();
+		if (player.x + player.size > (roomWidth - doorSize) / 2 && 
+			player.x < (roomWidth + doorSize) / 2) {
+			const newRoom = dungeon.grid[currentRoom.y - 1]?.[currentRoom.x];
+			if (newRoom) {
+				currentRoom = newRoom;
+				player.y = roomHeight - player.size - wallThickness;
+				spawnRoomEnemies();
+			}
 		} else {
-			player.y = 0;
+			player.y = wallThickness;
 		}
 	}
 	
-	// Porta Sul
+	// Porta Sul - só transita se estiver dentro da área da porta
 	if (currentRoom.doors.S && player.y + player.size > roomHeight) {
-		const newRoom = dungeon.grid[currentRoom.y + 1]?.[currentRoom.x];
-		if (newRoom) {
-			currentRoom = newRoom;
-			player.y = doorThickness;
-			spawnRoomEnemies();
+		if (player.x + player.size > (roomWidth - doorSize) / 2 && 
+			player.x < (roomWidth + doorSize) / 2) {
+			const newRoom = dungeon.grid[currentRoom.y + 1]?.[currentRoom.x];
+			if (newRoom) {
+				currentRoom = newRoom;
+				player.y = wallThickness;
+				spawnRoomEnemies();
+			}
 		} else {
-			player.y = roomHeight - player.size;
+			player.y = roomHeight - wallThickness - player.size;
 		}
 	}
 	
-	// Porta Leste
+	// Porta Leste - só transita se estiver dentro da área da porta
 	if (currentRoom.doors.E && player.x + player.size > roomWidth) {
-		const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x + 1];
-		if (newRoom) {
-			currentRoom = newRoom;
-			player.x = doorThickness;
-			spawnRoomEnemies();
+		if (player.y + player.size > (roomHeight - doorSize) / 2 && 
+			player.y < (roomHeight + doorSize) / 2) {
+			const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x + 1];
+			if (newRoom) {
+				currentRoom = newRoom;
+				player.x = wallThickness;
+				spawnRoomEnemies();
+			}
 		} else {
-			player.x = roomWidth - player.size;
+			player.x = roomWidth - wallThickness - player.size;
 		}
 	}
 	
-	// Porta Oeste
+	// Porta Oeste - só transita se estiver dentro da área da porta
 	if (currentRoom.doors.W && player.x < 0) {
-		const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x - 1];
-		if (newRoom) {
-			currentRoom = newRoom;
-			player.x = roomWidth - player.size - doorThickness;
-			spawnRoomEnemies();
+		if (player.y + player.size > (roomHeight - doorSize) / 2 && 
+			player.y < (roomHeight + doorSize) / 2) {
+			const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x - 1];
+			if (newRoom) {
+				currentRoom = newRoom;
+				player.x = roomWidth - player.size - wallThickness;
+				spawnRoomEnemies();
+			}
 		} else {
-			player.x = 0;
+			player.x = wallThickness;
 		}
 	}
 }
@@ -230,6 +347,119 @@ function drawMinimap() {
 	ctx.strokeRect(mapX - 5, mapY - 5, mapSize + 10, mapSize + 10);
 }
 
+// Desenhar vida (corações)
+function drawHealth() {
+	const heartSize = 30;
+	const heartSpacing = 5;
+	const startX = 10;
+	const startY = 10;
+	const maxHearts = Math.ceil(player.maxHealth / 2);
+	
+	for (let i = 0; i < maxHearts; i++) {
+		const x = startX + i * (heartSize + heartSpacing);
+		const y = startY;
+		
+		// Calcular se o coração está cheio, meio ou vazio
+		const heartValue = i * 2; // Cada coração representa 2 de vida
+		const filled = player.health - heartValue;
+		
+		if (filled >= 2) {
+			// Coração cheio
+			ctx.fillStyle = '#ff0000';
+			drawHeart(ctx, x, y, heartSize, true);
+		} else if (filled === 1) {
+			// Meio coração
+			ctx.fillStyle = '#ff0000';
+			drawHeart(ctx, x, y, heartSize, false);
+		} else {
+			// Coração vazio
+			ctx.fillStyle = '#333';
+			drawHeart(ctx, x, y, heartSize, true);
+		}
+		
+		// Contorno do coração
+		ctx.strokeStyle = '#000';
+		ctx.lineWidth = 2;
+		drawHeartOutline(ctx, x, y, heartSize);
+	}
+}
+
+function drawHeart(ctx, x, y, size, full) {
+	ctx.beginPath();
+	const topCurveHeight = size * 0.3;
+	
+	// Começar no topo do coração
+	ctx.moveTo(x + size / 2, y + topCurveHeight);
+	
+	if (full) {
+		// Lado esquerdo (curva superior esquerda)
+		ctx.bezierCurveTo(
+			x + size / 2, y, 
+			x, y, 
+			x, y + topCurveHeight
+		);
+		
+		// Lado esquerdo para baixo
+		ctx.bezierCurveTo(
+			x, y + (size + topCurveHeight) / 2,
+			x + size / 2, y + (size + topCurveHeight) / 1.2,
+			x + size / 2, y + size
+		);
+	} else {
+		// Meio coração (apenas metade direita)
+		ctx.lineTo(x + size / 2, y + size);
+	}
+	
+	// Lado direito
+	ctx.bezierCurveTo(
+		x + size / 2, y + (size + topCurveHeight) / 1.2,
+		x + size, y + (size + topCurveHeight) / 2,
+		x + size, y + topCurveHeight
+	);
+	
+	// Curva superior direita
+	ctx.bezierCurveTo(
+		x + size, y,
+		x + size / 2, y,
+		x + size / 2, y + topCurveHeight
+	);
+	
+	ctx.fill();
+}
+
+function drawHeartOutline(ctx, x, y, size) {
+	ctx.beginPath();
+	const topCurveHeight = size * 0.3;
+	
+	ctx.moveTo(x + size / 2, y + topCurveHeight);
+	
+	ctx.bezierCurveTo(
+		x + size / 2, y,
+		x, y,
+		x, y + topCurveHeight
+	);
+	
+	ctx.bezierCurveTo(
+		x, y + (size + topCurveHeight) / 2,
+		x + size / 2, y + (size + topCurveHeight) / 1.2,
+		x + size / 2, y + size
+	);
+	
+	ctx.bezierCurveTo(
+		x + size / 2, y + (size + topCurveHeight) / 1.2,
+		x + size, y + (size + topCurveHeight) / 2,
+		x + size, y + topCurveHeight
+	);
+	
+	ctx.bezierCurveTo(
+		x + size, y,
+		x + size / 2, y,
+		x + size / 2, y + topCurveHeight
+	);
+	
+	ctx.stroke();
+}
+
 // Função para ir ao próximo andar
 function goToNextFloor() {
 	currentFloor++;
@@ -259,11 +489,17 @@ function goToNextFloor() {
 }
 
 function update() {
+	// Atualizar player (invulnerabilidade, etc)
+	updatePlayer();
+	
 	// Movimento
 	if (keys['w']) player.y -= player.speed;
 	if (keys['s']) player.y += player.speed;
 	if (keys['a']) player.x -= player.speed;
 	if (keys['d']) player.x += player.speed;
+
+	// Verificar colisões com paredes (deve vir antes das transições)
+	checkWallCollisions();
 
 	// Debug: pressionar P para spawnar trapdoor
 	if (keys['p']) {
@@ -280,12 +516,90 @@ function update() {
 
 	// Desenhar sala atual
 	drawRoom();
+	
+	// Atualizar e desenhar inimigos
+	enemies.forEach((enemy, index) => {
+		if (enemy.dead) {
+			// Remover inimigo morto após um tempo
+			enemies.splice(index, 1);
+			return;
+		}
+		
+		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
+		drawEnemy(ctx, enemy);
+		
+		// Inimigo atira no player
+		if (updateResult && updateResult.shouldShoot) {
+			const angle = Math.atan2(updateResult.dy, updateResult.dx);
+			const bullet = createBullet(
+				enemy.x + enemy.size/2,
+				enemy.y + enemy.size/2,
+				angle,
+				6, // velocidade do tiro do inimigo
+				20, // tamanho menor para tiros de inimigos
+				enemy.damage,
+				true // marcar como tiro de inimigo
+			);
+			bullets.push(bullet);
+		}
+		
+		// Verificar colisão com player
+		if (checkEnemyCollision(enemy, player)) {
+			takeDamage(enemy.damage);
+		}
+		
+		// Verificar colisão com bullets do player
+		bullets.forEach((bullet, bIndex) => {
+			// Tiros de inimigos não atingem inimigos
+			if (bullet.isEnemy) return;
+			
+			const dx = bullet.x - (enemy.x + enemy.size/2);
+			const dy = bullet.y - (enemy.y + enemy.size/2);
+			const distance = Math.sqrt(dx*dx + dy*dy);
+			
+			if (distance < enemy.size/2 + bullet.size/2) {
+				damageEnemy(enemy, bullet.damage);
+				bullets.splice(bIndex, 1);
+			}
+		});
+	});
+	
+	// Verificar se a sala foi limpa (todos os inimigos mortos)
+	if (enemies.length === 0 && !currentRoom.cleared && currentRoom.type !== 'start' && currentRoom.type !== 'treasure') {
+		currentRoom.cleared = true;
+	}
 
 	// Bullets
 	bullets.forEach((b, i) => {
 		b.x += b.vx;
 		b.y += b.vy;
-		ctx.drawImage(bulletImg, b.x - b.size/2, b.y - b.size/2, b.size, b.size);
+		
+		// Cor diferente para tiros de inimigos
+		if (b.isEnemy) {
+			// Desenhar tiro de inimigo (círculo vermelho)
+			ctx.fillStyle = '#ff4444';
+			ctx.beginPath();
+			ctx.arc(b.x, b.y, b.size/2, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.strokeStyle = '#880000';
+			ctx.lineWidth = 2;
+			ctx.stroke();
+			
+			// Verificar colisão com player
+			const dx = b.x - (player.x + player.size/2);
+			const dy = b.y - (player.y + player.size/2);
+			const distance = Math.sqrt(dx*dx + dy*dy);
+			
+			if (distance < player.size/2 + b.size/2) {
+				takeDamage(b.damage);
+				bullets.splice(i, 1);
+			}
+		} else {
+			// Desenhar tiro do player (imagem normal)
+			ctx.drawImage(bulletImg, b.x - b.size/2, b.y - b.size/2, b.size, b.size);
+		}
+		
+		// Remover bullets que saem da tela
 		if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
 			bullets.splice(i, 1);
 		}
@@ -293,7 +607,28 @@ function update() {
 
 	// PowerUps
 	powerUps.forEach((p, i) => {
-		ctx.drawImage(p.img, p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+		// Desenhar círculo colorido de fundo
+		if (p.color) {
+			ctx.fillStyle = p.color;
+			ctx.beginPath();
+			ctx.arc(p.x, p.y, p.size/2, 0, Math.PI * 2);
+			ctx.fill();
+			
+			// Borda preta
+			ctx.strokeStyle = '#000';
+			ctx.lineWidth = 3;
+			ctx.stroke();
+			
+			// Brilho pulsante
+			const pulse = Math.sin(Date.now() / 200) * 0.3 + 0.7;
+			ctx.fillStyle = `rgba(255, 255, 255, ${pulse * 0.5})`;
+			ctx.beginPath();
+			ctx.arc(p.x, p.y, p.size/3, 0, Math.PI * 2);
+			ctx.fill();
+		} else {
+			ctx.drawImage(p.img, p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+		}
+		
 		let dx = (player.x + player.size/2) - p.x;
 		let dy = (player.y + player.size/2) - p.y;
 		let distance = Math.sqrt(dx*dx + dy*dy);
@@ -307,13 +642,18 @@ function update() {
 	ctx.fillStyle = "white";
 	ctx.fillText(player.damage, 10, 50);
 	
+	// Desenhar vida (corações) no canto superior esquerdo
+	drawHealth();
+	
 	// Mostrar andar atual
 	ctx.font = "24px Arial";
-	ctx.fillText(`Basement ${currentFloor}`, 10, 90);
+	ctx.fillStyle = "white";
+	ctx.fillText(`Basement ${currentFloor}`, 10, 140);
 	
 	// Mostrar tipo da sala
 	ctx.font = "16px Arial";
-	ctx.fillText(`${currentRoom.type} (${currentRoom.x},${currentRoom.y})`, 10, 115);
+	ctx.fillStyle = "white";
+	ctx.fillText(`${currentRoom.type} (${currentRoom.x},${currentRoom.y})`, 10, 165);
 	
 	// Verificar vitória
 	if (currentRoom.type === 'boss') {
@@ -344,6 +684,9 @@ function update() {
 }
 
 canvas.addEventListener('mousedown', e => {
+	// Verificar se pode atirar (fire rate)
+	if (!canShoot()) return;
+	
 	let angle = Math.atan2(
 		mouseY - (player.y + player.size/2),
 		mouseX - (player.x + player.size/2)
