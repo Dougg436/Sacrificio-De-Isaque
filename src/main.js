@@ -1,7 +1,7 @@
 import { player, drawPlayer, takeDamage, updatePlayer, canShoot } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
-import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculatePredictiveAngle } from './entities/enemy.js';
+import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle } from './entities/enemy.js';
 import { keys, setupKeyboard, mouseX, mouseY, setupMouse } from './core/input.js';
 import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
@@ -725,6 +725,22 @@ function drawHealth() {
 	const shotsPerSecond = (1000 / player.fireRate).toFixed(1);
 	ctx.strokeText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
 	ctx.fillText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
+	
+	// Padrão de movimento detectado (DEBUG - pode ser removido)
+	if (player.movementPattern && player.patternConfidence > 0.3) {
+		const patternIcons = {
+			circular: '🔄',
+			zigzag: '⚡',
+			strafe: '↔️',
+			straight: '➡️',
+			random: '❓'
+		};
+		const icon = patternIcons[player.movementPattern] || '❓';
+		const confidence = (player.patternConfidence * 100).toFixed(0);
+		ctx.fillStyle = player.patternConfidence > 0.6 ? '#ff0' : '#aaa';
+		ctx.strokeText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
+		ctx.fillText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
+	}
 }
 
 function drawHeart(ctx, x, y, size, full) {
@@ -830,6 +846,13 @@ function goToNextFloor() {
 	player.previousY = player.y;
 	player.velocityX = 0;
 	player.velocityY = 0;
+	player.previousVelocityX = 0;
+	player.previousVelocityY = 0;
+	player.accelerationX = 0;
+	player.accelerationY = 0;
+	player.movementHistory = []; // Limpar histórico
+	player.movementPattern = 'random';
+	player.patternConfidence = 0;
 	
 	// Spawnar conteúdo da nova sala
 	spawnRoomEnemies();
@@ -980,41 +1003,23 @@ function update() {
 		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
 		drawEnemy(ctx, enemy);
 		
-		// Inimigo atira no player com mira preditiva
+		// Inimigo atira no player com IA AVANÇADA de predição
 		if (updateResult && updateResult.shouldShoot) {
 			const bulletSpeed = 6;
 			
-			// Calcular ângulo preditivo baseado na velocidade do player
-			const predictiveAngle = calculatePredictiveAngle(
+			// Usar sistema avançado de predição que analisa padrões de movimento
+			const angle = calculateAdvancedPredictiveAngle(
 				enemy.x + enemy.size/2,  // posição X do inimigo
 				enemy.y + enemy.size/2,  // posição Y do inimigo
-				updateResult.playerX,    // posição X do player
-				updateResult.playerY,    // posição Y do player
-				updateResult.playerVelocityX, // velocidade X do player
-				updateResult.playerVelocityY, // velocidade Y do player
-				bulletSpeed              // velocidade do projétil
+				player,                   // objeto completo do player com histórico
+				bulletSpeed,              // velocidade do projétil
+				updateResult.aimAccuracy  // precisão do inimigo
 			);
-			
-			// Calcular ângulo direto (sem predição)
-			const directAngle = Math.atan2(updateResult.dy, updateResult.dx);
-			
-			// Interpolar entre ângulo direto e preditivo baseado na precisão do inimigo
-			// aimAccuracy = 0.0 -> usa apenas ângulo direto (sem predição)
-			// aimAccuracy = 1.0 -> usa apenas ângulo preditivo (predição perfeita)
-			const accuracy = updateResult.aimAccuracy || 0.5;
-			
-			// Interpolar os ângulos (considerando que ângulos podem cruzar 0/2π)
-			let angleDiff = predictiveAngle - directAngle;
-			// Normalizar diferença de ângulo para -π a π
-			while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-			while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-			
-			const finalAngle = directAngle + angleDiff * accuracy;
 			
 			const bullet = createBullet(
 				enemy.x + enemy.size/2,
 				enemy.y + enemy.size/2,
-				finalAngle,
+				angle,
 				bulletSpeed, // velocidade do tiro do inimigo
 				20, // tamanho menor para tiros de inimigos
 				enemy.damage,

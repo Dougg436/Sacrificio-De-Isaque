@@ -60,6 +60,158 @@ export function calculatePredictiveAngle(ex, ey, px, py, vx, vy, bulletSpeed) {
 	return Math.atan2(futureY - ey, futureX - ex);
 }
 
+/**
+ * Sistema AVANÇADO de predição que analisa padrões de movimento
+ * @param {number} ex - posição X do atirador
+ * @param {number} ey - posição Y do atirador
+ * @param {object} player - objeto do player com histórico de movimento
+ * @param {number} bulletSpeed - velocidade do projétil
+ * @param {number} accuracy - precisão base do inimigo (0-1)
+ * @returns {number} ângulo de tiro em radianos
+ */
+export function calculateAdvancedPredictiveAngle(ex, ey, player, bulletSpeed, accuracy) {
+	const px = player.x + player.size / 2;
+	const py = player.y + player.size / 2;
+	const vx = player.velocityX || 0;
+	const vy = player.velocityY || 0;
+	const ax = player.accelerationX || 0;
+	const ay = player.accelerationY || 0;
+	
+	const dx = px - ex;
+	const dy = py - ey;
+	const distance = Math.sqrt(dx * dx + dy * dy);
+	
+	// Tempo estimado para projétil alcançar o alvo
+	const timeToImpact = distance / bulletSpeed;
+	
+	// PREDIÇÃO BASEADA EM PADRÃO DE MOVIMENTO
+	let predictedX = px;
+	let predictedY = py;
+	
+	const pattern = player.movementPattern || 'random';
+	const confidence = player.patternConfidence || 0;
+	
+	switch (pattern) {
+		case 'circular':
+			// Prever continuação do movimento circular
+			predictedX = px + vx * timeToImpact + ax * timeToImpact * timeToImpact * 0.5;
+			predictedY = py + vy * timeToImpact + ay * timeToImpact * timeToImpact * 0.5;
+			
+			// Adicionar predição de curvatura circular
+			if (player.movementHistory && player.movementHistory.length >= 10) {
+				const history = player.movementHistory.slice(-10);
+				
+				// Calcular centro do círculo
+				const centerX = history.reduce((sum, h) => sum + h.x, 0) / history.length;
+				const centerY = history.reduce((sum, h) => sum + h.y, 0) / history.length;
+				const radius = Math.sqrt((px - centerX) ** 2 + (py - centerY) ** 2);
+				
+				// Calcular velocidade angular
+				const angles = history.map(h => Math.atan2(h.y - centerY, h.x - centerX));
+				let totalAngularChange = 0;
+				for (let i = 1; i < angles.length; i++) {
+					let diff = angles[i] - angles[i-1];
+					while (diff > Math.PI) diff -= 2 * Math.PI;
+					while (diff < -Math.PI) diff += 2 * Math.PI;
+					totalAngularChange += diff;
+				}
+				const angularVelocity = totalAngularChange / angles.length;
+				
+				// Prever posição futura no círculo
+				const currentAngle = Math.atan2(py - centerY, px - centerX);
+				const futureAngle = currentAngle + angularVelocity * timeToImpact * 2; // Multiplicador para melhor predição
+				
+				predictedX = centerX + Math.cos(futureAngle) * radius;
+				predictedY = centerY + Math.sin(futureAngle) * radius;
+			}
+			break;
+			
+		case 'zigzag':
+			// Prever mudança de direção iminente
+			const timeSinceLastChange = player.lastDirectionChange || 0;
+			const avgChangeInterval = 5; // frames médios entre mudanças
+			
+			if (timeSinceLastChange < avgChangeInterval) {
+				// Player provavelmente vai mudar de direção em breve
+				// Mirar entre posição atual e oposta à velocidade
+				const oppositeX = px - vx * timeToImpact * 0.5;
+				const oppositeY = py - vy * timeToImpact * 0.5;
+				predictedX = (px + oppositeX) / 2;
+				predictedY = (py + oppositeY) / 2;
+			} else {
+				// Predição linear com aceleração
+				predictedX = px + vx * timeToImpact + ax * timeToImpact * timeToImpact;
+				predictedY = py + vy * timeToImpact + ay * timeToImpact * timeToImpact;
+			}
+			break;
+			
+		case 'strafe':
+			// Movimento lateral consistente - predição mais confiável
+			predictedX = px + vx * timeToImpact * 1.2; // Multiplicador para compensar
+			predictedY = py + vy * timeToImpact * 1.2;
+			
+			// Usar aceleração
+			predictedX += ax * timeToImpact * timeToImpact * 0.5;
+			predictedY += ay * timeToImpact * timeToImpact * 0.5;
+			break;
+			
+		case 'straight':
+			// Movimento reto - predição muito confiável
+			predictedX = px + vx * timeToImpact * 1.5;
+			predictedY = py + vy * timeToImpact * 1.5;
+			
+			// Considerar aceleração
+			predictedX += ax * timeToImpact * timeToImpact;
+			predictedY += ay * timeToImpact * timeToImpact;
+			break;
+			
+		case 'random':
+		default:
+			// Sem padrão claro - usar predição básica com peso reduzido
+			predictedX = px + vx * timeToImpact * 0.7;
+			predictedY = py + vy * timeToImpact * 0.7;
+			break;
+	}
+	
+	// PREDIÇÃO DE PRÓXIMA MUDANÇA DE DIREÇÃO
+	// Analisar histórico para detectar mudanças frequentes
+	if (player.movementHistory && player.movementHistory.length >= 10) {
+		const recentChanges = player.directionChanges || 0;
+		if (recentChanges > 3) {
+			// Player muda muito de direção - adicionar incerteza
+			const uncertainty = (recentChanges / 10) * 30; // até 30px de spread
+			predictedX += (Math.random() - 0.5) * uncertainty;
+			predictedY += (Math.random() - 0.5) * uncertainty;
+		}
+	}
+	
+	// COMPENSAÇÃO POR DISTÂNCIA
+	// Quanto mais longe, mais incerta a predição
+	const distanceFactor = Math.min(distance / 400, 1.5);
+	predictedX = px + (predictedX - px) * distanceFactor;
+	predictedY = py + (predictedY - py) * distanceFactor;
+	
+	// APLICAR CONFIANÇA DO PADRÃO
+	// Quanto maior a confiança, mais peso na predição
+	const finalPredictedX = px + (predictedX - px) * confidence;
+	const finalPredictedY = py + (predictedY - py) * confidence;
+	
+	// Calcular ângulo final
+	const predictedAngle = Math.atan2(finalPredictedY - ey, finalPredictedX - ex);
+	
+	// Interpolar com ângulo direto baseado na precisão do inimigo
+	const directAngle = Math.atan2(dy, dx);
+	
+	let angleDiff = predictedAngle - directAngle;
+	while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+	while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+	
+	// Aplicar precisão do inimigo
+	const finalAngle = directAngle + angleDiff * accuracy;
+	
+	return finalAngle;
+}
+
 export function createEnemy(x, y, type = 'fly') {
 	const enemyTypes = {
 		fly: {
