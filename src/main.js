@@ -340,19 +340,7 @@ function checkRoomTransition() {
 	const doorSize = 80;
 	
 	// Verificar se há inimigos vivos na sala atual
-	// Salas de início, tesouro e salas já limpas nunca bloqueiam
-	const hasEnemies = enemies.length > 0 && !currentRoom.cleared && 
-	                   currentRoom.type !== 'start' && currentRoom.type !== 'treasure';
-	
-	// Se há inimigos (e sala não está limpa), não permitir transição (portas trancadas)
-	if (hasEnemies) {
-		// Impedir que o player saia da sala
-		if (player.x < wallThickness) player.x = wallThickness;
-		if (player.x + player.size > roomWidth - wallThickness) player.x = roomWidth - wallThickness - player.size;
-		if (player.y < wallThickness) player.y = wallThickness;
-		if (player.y + player.size > roomHeight - wallThickness) player.y = roomHeight - wallThickness - player.size;
-		return; // Não processar transições
-	}
+	const hasEnemies = enemies.length > 0;
 	
 	// Porta Norte - só transita se estiver dentro da área da porta
 	if (currentRoom.doors.N && player.y < 0) {
@@ -360,6 +348,12 @@ function checkRoomTransition() {
 			player.x < (roomWidth + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y - 1]?.[currentRoom.x];
 			if (newRoom) {
+				// Bloquear apenas se tem inimigos E a sala destino nunca foi visitada
+				const isNewRoom = !newRoom.savedState && !newRoom.cleared;
+				if (hasEnemies && isNewRoom) {
+					player.y = wallThickness;
+					return;
+				}
 				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.y = roomHeight - player.size - wallThickness;
@@ -376,6 +370,12 @@ function checkRoomTransition() {
 			player.x < (roomWidth + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y + 1]?.[currentRoom.x];
 			if (newRoom) {
+				// Bloquear apenas se tem inimigos E a sala destino nunca foi visitada
+				const isNewRoom = !newRoom.savedState && !newRoom.cleared;
+				if (hasEnemies && isNewRoom) {
+					player.y = roomHeight - wallThickness - player.size;
+					return;
+				}
 				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.y = wallThickness;
@@ -392,6 +392,12 @@ function checkRoomTransition() {
 			player.y < (roomHeight + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x + 1];
 			if (newRoom) {
+				// Bloquear apenas se tem inimigos E a sala destino nunca foi visitada
+				const isNewRoom = !newRoom.savedState && !newRoom.cleared;
+				if (hasEnemies && isNewRoom) {
+					player.x = roomWidth - wallThickness - player.size;
+					return;
+				}
 				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.x = wallThickness;
@@ -408,6 +414,12 @@ function checkRoomTransition() {
 			player.y < (roomHeight + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x - 1];
 			if (newRoom) {
+				// Bloquear apenas se tem inimigos E a sala destino nunca foi visitada
+				const isNewRoom = !newRoom.savedState && !newRoom.cleared;
+				if (hasEnemies && isNewRoom) {
+					player.x = wallThickness;
+					return;
+				}
 				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.x = roomWidth - player.size - wallThickness;
@@ -445,13 +457,32 @@ function drawRoom() {
 	const hasEnemies = enemies.length > 0 && !currentRoom.cleared && 
 	                   currentRoom.type !== 'start' && currentRoom.type !== 'treasure';
 	
-	// Se há inimigos, desenhar portas trancadas (vermelhas), senão normais (cinza)
-	ctx.fillStyle = hasEnemies ? '#8B0000' : '#555';
+	// Helper function to check if a door should be locked
+	function isDoorLocked(direction) {
+		if (!hasEnemies) return false;
+		
+		let destX = currentRoom.x;
+		let destY = currentRoom.y;
+		
+		if (direction === 'N') destY--;
+		else if (direction === 'S') destY++;
+		else if (direction === 'E') destX++;
+		else if (direction === 'W') destX--;
+		
+		const destRoom = dungeon.grid[destY]?.[destX];
+		if (!destRoom) return false;
+		
+		// Só tranca se a sala destino NUNCA foi visitada (sem estado salvo E não limpa)
+		const isNewRoom = !destRoom.savedState && !destRoom.cleared;
+		return isNewRoom;
+	}
 	
 	if (currentRoom.doors.N) {
+		const locked = isDoorLocked('N');
+		ctx.fillStyle = locked ? '#8B0000' : '#555';
 		ctx.fillRect((roomWidth - doorSize) / 2, 0, doorSize, wallThickness);
 		// Desenhar "X" se trancada
-		if (hasEnemies) {
+		if (locked) {
 			ctx.strokeStyle = '#FF0000';
 			ctx.lineWidth = 3;
 			const doorX = (roomWidth - doorSize) / 2;
@@ -466,8 +497,10 @@ function drawRoom() {
 	}
 	
 	if (currentRoom.doors.S) {
+		const locked = isDoorLocked('S');
+		ctx.fillStyle = locked ? '#8B0000' : '#555';
 		ctx.fillRect((roomWidth - doorSize) / 2, roomHeight - wallThickness, doorSize, wallThickness);
-		if (hasEnemies) {
+		if (locked) {
 			ctx.strokeStyle = '#FF0000';
 			ctx.lineWidth = 3;
 			const doorX = (roomWidth - doorSize) / 2;
@@ -482,8 +515,10 @@ function drawRoom() {
 	}
 	
 	if (currentRoom.doors.E) {
+		const locked = isDoorLocked('E');
+		ctx.fillStyle = locked ? '#8B0000' : '#555';
 		ctx.fillRect(roomWidth - wallThickness, (roomHeight - doorSize) / 2, wallThickness, doorSize);
-		if (hasEnemies) {
+		if (locked) {
 			ctx.strokeStyle = '#FF0000';
 			ctx.lineWidth = 3;
 			const doorX = roomWidth - wallThickness;
@@ -498,8 +533,10 @@ function drawRoom() {
 	}
 	
 	if (currentRoom.doors.W) {
+		const locked = isDoorLocked('W');
+		ctx.fillStyle = locked ? '#8B0000' : '#555';
 		ctx.fillRect(0, (roomHeight - doorSize) / 2, wallThickness, doorSize);
-		if (hasEnemies) {
+		if (locked) {
 			ctx.strokeStyle = '#FF0000';
 			ctx.lineWidth = 3;
 			const doorX = 0;
