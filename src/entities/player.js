@@ -130,7 +130,7 @@ function analyzeMovementPatterns() {
 	// 4. DETECTAR MOVIMENTO RETO
 	const straightScore = detectStraightMotion(recentHistory);
 	
-	// Determinar padrão dominante
+	// Determinar padrão dominante com critérios mais rigorosos
 	const patterns = [
 		{ name: 'circular', score: circularScore },
 		{ name: 'zigzag', score: zigzagScore },
@@ -140,14 +140,33 @@ function analyzeMovementPatterns() {
 	
 	patterns.sort((a, b) => b.score - a.score);
 	const dominant = patterns[0];
+	const secondBest = patterns[1];
 	
-	// Atualizar padrão apenas se confiança for alta o suficiente
-	if (dominant.score > 0.4) {
+	// Só atualizar padrão se:
+	// 1. Score for alto o suficiente (> 0.6)
+	// 2. For significativamente melhor que o segundo lugar (diferença > 0.2)
+	// 3. OU se o score atual for muito baixo (sem padrão claro)
+	
+	const minConfidenceThreshold = 0.6;
+	const dominanceThreshold = 0.2;
+	
+	if (dominant.score > minConfidenceThreshold && 
+		(dominant.score - secondBest.score) > dominanceThreshold) {
+		
 		player.movementPattern = dominant.name;
 		player.patternConfidence = dominant.score;
-	} else {
+		
+	} else if (dominant.score < 0.3) {
+		// Se nenhum padrão tem score decente, é realmente random
 		player.movementPattern = 'random';
 		player.patternConfidence = 0;
+		
+	} else {
+		// Scores medianos - manter padrão anterior mas reduzir confiança
+		player.patternConfidence = Math.max(player.patternConfidence * 0.9, 0.1);
+		if (player.patternConfidence < 0.3) {
+			player.movementPattern = 'random';
+		}
 	}
 	
 	// Calcular velocidade média
@@ -171,7 +190,14 @@ function analyzeMovementPatterns() {
  * Detecta se o player está se movendo em círculos
  */
 function detectCircularMotion(history) {
-	if (history.length < 10) return 0;
+	if (history.length < 12) return 0; // Precisa de mais histórico para círculos
+	
+	// Verificar se há movimento consistente
+	const speeds = history.map(h => h.speed);
+	const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+	
+	// Se não está se movendo, não pode ser circular
+	if (avgSpeed < 1.5) return 0;
 	
 	// Calcular centro de massa do movimento
 	const centerX = history.reduce((sum, h) => sum + h.x, 0) / history.length;
@@ -181,39 +207,73 @@ function detectCircularMotion(history) {
 	const distances = history.map(h => Math.sqrt((h.x - centerX) ** 2 + (h.y - centerY) ** 2));
 	const avgDistance = distances.reduce((a, b) => a + b, 0) / distances.length;
 	
+	// Circular requer raio mínimo (não pode ser círculo muito pequeno)
+	if (avgDistance < 30) return 0;
+	
 	// Calcular variação das distâncias (quanto mais constante, mais circular)
 	const variance = distances.reduce((sum, d) => sum + (d - avgDistance) ** 2, 0) / distances.length;
 	const stdDev = Math.sqrt(variance);
 	
-	// Circular se distâncias são consistentes E há mudança angular consistente
+	// Distâncias devem ser MUITO consistentes para ser circular
 	const distanceConsistency = 1 - Math.min(stdDev / avgDistance, 1);
+	
+	// Precisa de consistência alta
+	if (distanceConsistency < 0.7) return 0;
 	
 	// Calcular mudança angular total
 	let totalAngleChange = 0;
+	let consistentRotation = true;
+	const angularVelocities = [];
+	
 	for (let i = 1; i < history.length; i++) {
 		const angle1 = Math.atan2(history[i-1].y - centerY, history[i-1].x - centerX);
 		const angle2 = Math.atan2(history[i].y - centerY, history[i].x - centerX);
 		let diff = angle2 - angle1;
+		
 		// Normalizar
 		while (diff > Math.PI) diff -= 2 * Math.PI;
 		while (diff < -Math.PI) diff += 2 * Math.PI;
+		
+		angularVelocities.push(diff);
 		totalAngleChange += Math.abs(diff);
 	}
 	
-	// Circular se há rotação significativa
-	const rotationScore = Math.min(totalAngleChange / Math.PI, 1);
+	// Verificar se a rotação é consistente (mesmo sentido)
+	const positiveRotations = angularVelocities.filter(v => v > 0).length;
+	const negativeRotations = angularVelocities.filter(v => v < 0).length;
+	const rotationConsistency = Math.abs(positiveRotations - negativeRotations) / angularVelocities.length;
 	
-	return (distanceConsistency * 0.6 + rotationScore * 0.4);
+	// Deve ter rotação consistente em uma direção
+	if (rotationConsistency < 0.6) return 0;
+	
+	// Circular se há rotação significativa (pelo menos 90 graus total)
+	const rotationScore = Math.min(totalAngleChange / (Math.PI / 2), 1);
+	
+	// Precisa de rotação mínima
+	if (rotationScore < 0.5) return 0;
+	
+	const finalScore = (distanceConsistency * 0.4 + rotationScore * 0.4 + rotationConsistency * 0.2);
+	
+	// Só retornar score alto se realmente for circular
+	return finalScore > 0.7 ? finalScore : 0;
 }
 
 /**
  * Detecta movimento em zigzag
  */
 function detectZigzagMotion(history) {
-	if (history.length < 8) return 0;
+	if (history.length < 10) return 0;
+	
+	// Verificar se há movimento
+	const speeds = history.map(h => h.speed);
+	const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+	
+	if (avgSpeed < 1.5) return 0;
 	
 	let directionChanges = 0;
 	let rapidChanges = 0;
+	let alternatingChanges = 0;
+	const recentDirections = [];
 	
 	for (let i = 2; i < history.length; i++) {
 		const angle1 = history[i-2].direction;
@@ -230,19 +290,46 @@ function detectZigzagMotion(history) {
 		while (diff2 > Math.PI) diff2 -= 2 * Math.PI;
 		while (diff2 < -Math.PI) diff2 += 2 * Math.PI;
 		
-		// Zigzag = mudanças de direção em sentidos opostos
-		if (Math.abs(diff1) > Math.PI / 6 && Math.abs(diff2) > Math.PI / 6) {
+		// Zigzag = mudanças SIGNIFICATIVAS de direção (> 30 graus)
+		const minAngleChange = Math.PI / 6; // 30 graus
+		
+		if (Math.abs(diff1) > minAngleChange && Math.abs(diff2) > minAngleChange) {
 			directionChanges++;
+			
+			// Zigzag = mudanças em sentidos opostos (alternando)
 			if (Math.sign(diff1) !== Math.sign(diff2)) {
 				rapidChanges++;
+				recentDirections.push(Math.sign(diff1), Math.sign(diff2));
+			}
+		}
+	}
+	
+	// Verificar se há padrão alternante nas últimas mudanças
+	if (recentDirections.length >= 6) {
+		for (let i = 0; i < recentDirections.length - 3; i += 2) {
+			if (recentDirections[i] !== recentDirections[i+2] && 
+				recentDirections[i+1] !== recentDirections[i+3] &&
+				recentDirections[i] !== recentDirections[i+1]) {
+				alternatingChanges++;
 			}
 		}
 	}
 	
 	const changeRatio = directionChanges / (history.length - 2);
 	const oppositeRatio = rapidChanges / Math.max(directionChanges, 1);
+	const alternatingRatio = alternatingChanges / Math.max(recentDirections.length / 2, 1);
 	
-	return Math.min(changeRatio * oppositeRatio * 2, 1);
+	// Zigzag verdadeiro precisa de:
+	// 1. Muitas mudanças de direção (> 40%)
+	// 2. Maioria em sentidos opostos (> 70%)
+	// 3. Padrão alternante recente (> 50%)
+	
+	if (changeRatio < 0.4 || oppositeRatio < 0.7) return 0;
+	
+	const finalScore = changeRatio * 0.4 + oppositeRatio * 0.4 + alternatingRatio * 0.2;
+	
+	// Só considerar zigzag se score for alto
+	return finalScore > 0.6 ? finalScore : 0;
 }
 
 /**
@@ -251,32 +338,48 @@ function detectZigzagMotion(history) {
 function detectStrafeMotion(history) {
 	if (history.length < 10) return 0;
 	
-	// Calcular direção geral do movimento
-	const firstHalf = history.slice(0, Math.floor(history.length / 2));
-	const secondHalf = history.slice(Math.floor(history.length / 2));
-	
-	const avgDir1 = Math.atan2(
-		firstHalf.reduce((sum, h) => sum + h.vy, 0),
-		firstHalf.reduce((sum, h) => sum + h.vx, 0)
-	);
-	const avgDir2 = Math.atan2(
-		secondHalf.reduce((sum, h) => sum + h.vy, 0),
-		secondHalf.reduce((sum, h) => sum + h.vx, 0)
-	);
-	
-	// Strafe = direção consistente ao longo do tempo
-	let diff = Math.abs(avgDir2 - avgDir1);
-	while (diff > Math.PI) diff = 2 * Math.PI - diff;
-	
-	const directionConsistency = 1 - (diff / Math.PI);
-	
-	// Verificar se velocidade é consistente (não para e anda)
+	// Primeiro verificar se há movimento consistente
 	const speeds = history.map(h => h.speed);
 	const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+	
+	// Se não está se movendo muito, não é strafe
+	if (avgSpeed < 2) return 0;
+	
+	// Strafe = direção MUITO consistente ao longo do tempo
+	const directions = history.map(h => h.direction);
+	
+	// Calcular desvio padrão das direções
+	const avgDirection = directions.reduce((a, b) => a + b, 0) / directions.length;
+	let totalDiff = 0;
+	let maxDiff = 0;
+	
+	for (let i = 0; i < directions.length; i++) {
+		let diff = Math.abs(directions[i] - avgDirection);
+		// Normalizar para 0-π
+		diff = Math.min(diff, 2 * Math.PI - diff);
+		totalDiff += diff;
+		if (diff > maxDiff) maxDiff = diff;
+	}
+	
+	const avgDiff = totalDiff / directions.length;
+	
+	// Strafe APENAS se direção for MUITO consistente
+	// Máximo de 15 graus de variação média
+	if (avgDiff > Math.PI / 12) return 0; // 15 graus
+	// E nenhuma mudança maior que 30 graus
+	if (maxDiff > Math.PI / 6) return 0; // 30 graus
+	
+	const directionConsistency = 1 - (avgDiff / (Math.PI / 12));
+	
+	// Verificar se velocidade é consistente (não para e anda)
 	const speedVariance = speeds.reduce((sum, s) => sum + (s - avgSpeed) ** 2, 0) / speeds.length;
 	const speedConsistency = 1 - Math.min(Math.sqrt(speedVariance) / avgSpeed, 1);
 	
-	return directionConsistency * 0.5 + speedConsistency * 0.5;
+	// Strafe requer ALTA consistência em direção E velocidade
+	const finalScore = directionConsistency * 0.6 + speedConsistency * 0.4;
+	
+	// Só considerar strafe se score for alto
+	return finalScore > 0.75 ? finalScore : 0;
 }
 
 /**
@@ -284,6 +387,26 @@ function detectStrafeMotion(history) {
  */
 function detectStraightMotion(history) {
 	if (history.length < 8) return 0;
+	
+	// Primeiro verificar se há velocidade consistente e não-zero
+	const speeds = history.map(h => h.speed);
+	const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+	
+	// Se não está se movendo muito, não pode ser "straight"
+	if (avgSpeed < 2) return 0;
+	
+	// Calcular variação de direção - straight deve ter direção MUITO consistente
+	const directions = history.map(h => h.direction);
+	let maxAngleDiff = 0;
+	for (let i = 1; i < directions.length; i++) {
+		let diff = Math.abs(directions[i] - directions[i-1]);
+		// Normalizar para 0-π
+		diff = Math.min(diff, 2 * Math.PI - diff);
+		if (diff > maxAngleDiff) maxAngleDiff = diff;
+	}
+	
+	// Se mudou mais de 20 graus em qualquer frame, NÃO é straight
+	if (maxAngleDiff > Math.PI / 9) return 0; // 20 graus
 	
 	// Calcular desvio da linha reta usando regressão linear
 	const n = history.length;
@@ -307,16 +430,21 @@ function detectStraightMotion(history) {
 	
 	const avgDeviation = totalDeviation / n;
 	
-	// Quanto menor o desvio, mais reto
-	const straightness = Math.max(0, 1 - avgDeviation / 50); // 50px de desvio = 0 score
+	// Straight APENAS se desvio MUITO pequeno (menos de 15px)
+	if (avgDeviation > 15) return 0;
 	
-	// Verificar consistência de velocidade
-	const speeds = history.map(h => h.speed);
-	const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+	// Quanto menor o desvio, mais reto
+	const straightness = Math.max(0, 1 - avgDeviation / 15);
+	
+	// Verificar consistência de velocidade - straight deve ter aceleração mínima
 	const speedVariance = speeds.reduce((sum, s) => sum + (s - avgSpeed) ** 2, 0) / speeds.length;
 	const speedConsistency = 1 - Math.min(Math.sqrt(speedVariance) / Math.max(avgSpeed, 0.1), 1);
 	
-	return straightness * 0.7 + speedConsistency * 0.3;
+	// Precisa de ALTA consistência de velocidade E baixo desvio
+	const finalScore = straightness * 0.6 + speedConsistency * 0.4;
+	
+	// Só retornar score alto se realmente for straight
+	return finalScore > 0.7 ? finalScore : 0;
 }
 
 export function canShoot() {

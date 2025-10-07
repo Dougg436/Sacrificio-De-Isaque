@@ -2,13 +2,357 @@ import { player, drawPlayer, takeDamage, updatePlayer, canShoot } from './entiti
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
 import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle } from './entities/enemy.js';
-import { keys, setupKeyboard, mouseX, mouseY, setupMouse } from './core/input.js';
+import { keys, setupKeyboard, mouseX, mouseY, setupMouse, updateFrame, recordInputSnapshot, getRecentInputSequence, inputHistory } from './core/input.js';
 import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
 import { MIN_FIRE_RATE } from './config.js';
+import { UltraPrecisionEnsembleAI } from './ai/ultra-precision-ensemble.js';
 
 const canvas = document.getElementById('gameScreen');
 const ctx = canvas.getContext('2d');
+
+// === A IA MAIS ABSURDA DO MUNDO ===
+console.log('🚀 INICIALIZANDO SISTEMA DE IA ULTRA PRECISO...');
+const ultraAI = new UltraPrecisionEnsembleAI();
+let aiPredictions = [];
+let lastAIUpdateTime = 0;
+let aiStats = { predictions: 0, accuracy: 0, ultraPrecisionMode: true };
+
+// Performance controls - MODO ULTRA PRECISO ATIVADO
+let AI_ENABLED = true; // SEMPRE ATIVO - performance não importa
+let AI_UPDATE_INTERVAL = 100; // REDUZIDO: Atualizar IA a cada 100ms para máxima precisão
+let AI_TRAINING_INTERVAL = 500; // REDUZIDO: Treinar a cada 500ms para aprendizado contínuo
+let lastAITrainingTime = 0;
+
+// Buffer para coleta de dados de treinamento (AUMENTADO PARA MÁXIMA PRECISÃO)
+let trainingBuffer = [];
+let lastPlayerPositions = [];
+let futurePredictionDelay = 10; // AUMENTADO: predições mais distantes para mais precisão
+let aiValidationBuffer = []; // Buffer para validação das predições
+
+// Função para coletar dados de treinamento da IA (MODO ULTRA PRECISO)
+async function collectAITrainingData() {
+	// IA SEMPRE ATIVA - MÁXIMA PRECISÃO
+	if (!AI_ENABLED) return;
+	
+	const currentTime = Date.now();
+	
+	// COLETA CONTÍNUA - sem throttling para máxima precisão
+	// Manter histórico de posições para calcular dados futuros (AUMENTADO)
+	lastPlayerPositions.push({
+		x: player.x,
+		y: player.y,
+		vx: player.velocityX || 0,
+		vy: player.velocityY || 0,
+		timestamp: currentTime,
+		frame: updateFrame.currentFrame || 0,
+		health: player.health,
+		inputs: [...(inputHistory.slice(-3) || [])] // Últimos 3 inputs
+	});
+	
+	// Limitar histórico a 50 frames (AUMENTADO para mais dados)
+	if (lastPlayerPositions.length > 50) {
+		lastPlayerPositions.shift();
+	}
+	
+	// TREINAMENTO CONTÍNUO COM MAIS DADOS
+	if (lastPlayerPositions.length >= futurePredictionDelay + 10 && 
+		inputHistory.length >= 10 && 
+		player.movementHistory.length >= 10) {
+		
+		// Pegar dados do passado para treinamento (MAIS DADOS)
+		const pastIndex = lastPlayerPositions.length - futurePredictionDelay - 1;
+		const pastPosition = lastPlayerPositions[pastIndex];
+		const pastInputs = inputHistory.slice(-10 - futurePredictionDelay, -futurePredictionDelay);
+		const pastMovement = player.movementHistory.slice(-10 - futurePredictionDelay, -futurePredictionDelay);
+		
+		// Dados atuais como "futuro" que a IA deve aprender a prever
+		const currentPosition = { x: player.x, y: player.y };
+		const currentVelocity = { 
+			x: player.velocityX || 0, 
+			y: player.velocityY || 0 
+		};
+		
+		// Estado do player no momento passado (MAIS DETALHADO)
+		const pastPlayerState = {
+			x: pastPosition.x,
+			y: pastPosition.y,
+			vx: pastPosition.vx,
+			vy: pastPosition.vy,
+			averageSpeed: player.averageSpeed || 3,
+			directionChanges: player.directionChanges || 0,
+			patternConfidence: player.patternConfidence || 0.5,
+			health: pastPosition.health,
+			timestamp: pastPosition.timestamp
+		};
+		
+		// ADICIONAR DADOS DE TREINAMENTO SEMPRE (sem throttling)
+		try {
+			// Extrair features usando o novo sistema
+			const features = ultraAI.extractUltraFeatures(pastInputs, pastMovement, pastPlayerState);
+			
+			// Adicionar exemplo de treinamento
+			ultraAI.addTrainingExample(features, currentPosition, futurePredictionDelay / 60); // Converter frames para segundos
+			
+			// Log de progresso
+			if (ultraAI.stats.totalPredictions % 50 === 0) {
+				console.log(`🎯 IA ULTRA PRECISA - Total de exemplos: ${ultraAI.stats.totalPredictions}, Precisão: ${(ultraAI.stats.accuracy * 100).toFixed(2)}%`);
+			}
+			
+		} catch (error) {
+			console.warn('⚠️ Erro no treinamento da IA Ultra Precisa:', error.message);
+		}
+		
+		lastAITrainingTime = currentTime;
+	}
+	
+	// FAZER PREDIÇÕES FREQUENTES para máxima precisão
+	if (currentTime - lastAIUpdateTime > AI_UPDATE_INTERVAL) {
+		await updateUltraPreciseAIPredictions();
+		lastAIUpdateTime = currentTime;
+	}
+}
+
+// Função para atualizar predições da IA ULTRA PRECISA
+async function updateUltraPreciseAIPredictions() {
+	if (!AI_ENABLED || inputHistory.length < 10 || player.movementHistory.length < 10) {
+		return;
+	}
+	
+	// Estado atual do player para predição (ULTRA DETALHADO)
+	const playerState = {
+		x: player.x,
+		y: player.y,
+		vx: player.velocityX || 0,
+		vy: player.velocityY || 0,
+		averageSpeed: player.averageSpeed || 3,
+		directionChanges: player.directionChanges || 0,
+		patternConfidence: player.patternConfidence || 0.5,
+		health: player.health,
+		timestamp: Date.now()
+	};
+	
+	// MÚLTIPLOS HORIZONTES TEMPORAIS para máxima precisão
+	const timeHorizons = [0.1, 0.25, 0.5, 0.75, 1.0]; // 100ms até 1 segundo
+	
+	try {
+		for (const horizon of timeHorizons) {
+			const prediction = await ultraAI.predictPlayerPosition(
+				inputHistory.slice(-15), // Últimos 15 inputs para máxima precisão
+				player.movementHistory.slice(-15), // Últimos 15 movimentos
+				playerState,
+				horizon
+			);
+			
+			// Adicionar predição apenas se confiança for alta
+			if (prediction.confidence > 0.7) { // Aceitar apenas 70%+ confiança
+				
+				// Armazenar para validação futura
+				aiValidationBuffer.push({
+					prediction: prediction,
+					createdAt: Date.now(),
+					validationTime: Date.now() + (horizon * 1000),
+					playerStateAtPrediction: {...playerState}
+				});
+				
+				aiPredictions.push({
+					position: prediction.position,
+					confidence: prediction.confidence,
+					timeHorizon: horizon,
+					createdAt: Date.now(),
+					validationTime: Date.now() + (horizon * 1000),
+					networkPredictions: prediction.networkPredictions,
+					processingTime: prediction.processingTime,
+					metadata: prediction.metadata
+				});
+			}
+		}
+		
+		// Log de performance da IA
+		if (aiPredictions.length > 0) {
+			const avgConfidence = aiPredictions.reduce((sum, p) => sum + p.confidence, 0) / aiPredictions.length;
+			const activeSystems = aiPredictions[0]?.metadata?.activeSystems || 0;
+			
+			console.log(`🧠 IA ULTRA PRECISA - Predições: ${aiPredictions.length}, Confiança média: ${(avgConfidence * 100).toFixed(1)}%, Sistemas ativos: ${activeSystems}`);
+		}
+		
+	} catch (error) {
+		console.error('❌ ERRO CRÍTICO na IA Ultra Precisa:', error);
+		// Não desabilitar - tentar novamente na próxima iteração
+	}
+	
+	// VALIDAR PREDIÇÕES ANTERIORES para calcular precisão
+	await validateUltraPrecisePredictions();
+	
+	// Limitar número de predições ativas (mas manter mais para precisão)
+	if (aiPredictions.length > 20) {
+		aiPredictions = aiPredictions.slice(-15); // Manter as 15 mais recentes
+	}
+	
+	// Limitar buffer de validação
+	if (aiValidationBuffer.length > 100) {
+		aiValidationBuffer = aiValidationBuffer.slice(-80); // Manter os 80 mais recentes
+	}
+}
+
+// Função para validar predições e melhorar a IA continuamente
+async function validateUltraPrecisePredictions() {
+	if (!AI_ENABLED || aiValidationBuffer.length === 0) return;
+	
+	const currentTime = Date.now();
+	let validatedCount = 0;
+	const currentPosition = { x: player.x, y: player.y };
+	
+	// Validar TODAS as predições que chegaram no tempo
+	for (let i = aiValidationBuffer.length - 1; i >= 0; i--) {
+		const predictionData = aiValidationBuffer[i];
+		
+		if (currentTime >= predictionData.validationTime) {
+			// Calcular erro da predição
+			const error = Math.sqrt(
+				Math.pow(predictionData.prediction.position.x - currentPosition.x, 2) +
+				Math.pow(predictionData.prediction.position.y - currentPosition.y, 2)
+			);
+			
+			// Tolerância baseada no horizonte temporal (mais tolerância para predições mais distantes)
+			const tolerance = 20 + (predictionData.prediction.timeHorizon * 30);
+			
+			// Validar com a IA Ultra Precisa
+			const validation = ultraAI.validatePrediction(
+				predictionData.prediction.position,
+				currentPosition,
+				tolerance
+			);
+			
+			// Atualizar estatísticas globais
+			aiStats.predictions = ultraAI.stats.totalPredictions;
+			aiStats.accuracy = ultraAI.stats.accuracy;
+			
+			// Remover predição validada
+			aiValidationBuffer.splice(i, 1);
+			validatedCount++;
+			
+			// Log detalhado para casos de baixa precisão
+			if (!validation.isCorrect && predictionData.prediction.confidence > 0.8) {
+				console.warn(`⚠️ Predição falhou: erro=${error.toFixed(1)}px, confiança=${(predictionData.prediction.confidence * 100).toFixed(1)}%, horizonte=${predictionData.prediction.timeHorizon}s`);
+			}
+		}
+	}
+	
+	// Log de progresso a cada validação
+	if (validatedCount > 0) {
+		console.log(`✅ Validadas ${validatedCount} predições. Precisão atual: ${(aiStats.accuracy * 100).toFixed(2)}%`);
+		
+		// Se a precisão estiver baixa, ajustar parâmetros
+		if (aiStats.accuracy < 0.8 && ultraAI.stats.totalPredictions > 50) {
+			console.log('🔧 Precisão baixa detectada. Iniciando auto-otimização...');
+			await ultraAI.continuousOptimization();
+		}
+	}
+}
+
+// Função para obter melhor predição para um inimigo (ULTRA PRECISA)
+function getBestUltraPreciseAIPrediction(enemy, bulletSpeed) {
+	if (aiPredictions.length === 0) {
+		return null;
+	}
+	
+	// Calcular tempo aproximado para bala atingir o player
+	const dx = (player.x + player.size/2) - (enemy.x + enemy.size/2);
+	const dy = (player.y + player.size/2) - (enemy.y + enemy.size/2);
+	const distance = Math.sqrt(dx*dx + dy*dy);
+	const approxTime = distance / bulletSpeed;
+	
+	// Encontrar MÚLTIPLAS predições e usar ensemble
+	const candidatePredictions = aiPredictions.filter(prediction => {
+		const timeDiff = Math.abs(prediction.timeHorizon - approxTime);
+		return timeDiff < 0.3 && prediction.confidence > 0.75; // Apenas predições muito confiáveis
+	});
+	
+	if (candidatePredictions.length === 0) {
+		// Fallback: usar predição com maior confiança
+		const bestPrediction = aiPredictions.reduce((best, current) => 
+			current.confidence > best.confidence ? current : best
+		);
+		return bestPrediction.confidence > 0.6 ? bestPrediction : null;
+	}
+	
+	// ENSEMBLE: combinar múltiplas predições usando pesos de confiança
+	let totalWeight = 0;
+	let weightedX = 0;
+	let weightedY = 0;
+	let maxConfidence = 0;
+	
+	candidatePredictions.forEach(prediction => {
+		const timeWeight = 1 - Math.abs(prediction.timeHorizon - approxTime) / 0.3; // Peso baseado na proximidade temporal
+		const confidenceWeight = Math.pow(prediction.confidence, 2); // Peso quadrático para alta confiança
+		const finalWeight = timeWeight * confidenceWeight;
+		
+		weightedX += prediction.position.x * finalWeight;
+		weightedY += prediction.position.y * finalWeight;
+		totalWeight += finalWeight;
+		maxConfidence = Math.max(maxConfidence, prediction.confidence);
+	});
+	
+	if (totalWeight === 0) return null;
+	
+	return {
+		position: {
+			x: weightedX / totalWeight,
+			y: weightedY / totalWeight
+		},
+		confidence: maxConfidence,
+		timeHorizon: approxTime,
+		ensembleSize: candidatePredictions.length,
+		isEnsemble: candidatePredictions.length > 1
+	};
+}
+
+// Função para desenhar visualização da IA (opcional, para debug)
+function drawAIVisualization() {
+	if (!keys['i']) return; // Apenas mostrar se tecla I estiver pressionada
+	
+	// Desenhar predições da IA
+	aiPredictions.forEach(prediction => {
+		const alpha = Math.max(0.1, prediction.confidence);
+		const timeRatio = prediction.timeHorizon / 1.5; // Normalizar para 1.5s max
+		
+		// Cor baseada no tempo de predição
+		ctx.fillStyle = `rgba(${255 * timeRatio}, ${255 * (1 - timeRatio)}, 0, ${alpha})`;
+		ctx.beginPath();
+		ctx.arc(prediction.position.x, prediction.position.y, 8, 0, Math.PI * 2);
+		ctx.fill();
+		
+		// Linha da posição atual para predição
+		ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.5})`;
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.moveTo(player.x + player.size/2, player.y + player.size/2);
+		ctx.lineTo(prediction.position.x, prediction.position.y);
+		ctx.stroke();
+	});
+	
+	// Mostrar estatísticas da IA
+	ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+	ctx.fillRect(10, 200, 250, 120);
+	
+	ctx.fillStyle = '#fff';
+	ctx.font = '14px Arial';
+	ctx.textAlign = 'left';
+	
+	const stats = advancedAI.getStats();
+	ctx.fillText(`AI Predictions: ${stats.totalPredictions}`, 15, 220);
+	ctx.fillText(`Accuracy: ${(stats.predictionAccuracy * 100).toFixed(1)}%`, 15, 240);
+	ctx.fillText(`Pattern Accuracy: ${(stats.patternAccuracy * 100).toFixed(1)}%`, 15, 260);
+	ctx.fillText(`Training Data: ${stats.knnDataPoints}`, 15, 280);
+	ctx.fillText(`Neural Epochs: ${stats.trainingEpochs}`, 15, 300);
+	
+	// Mostrar padrão atual
+	if (player.movementPattern && player.patternConfidence > 0.3) {
+		ctx.fillStyle = player.patternConfidence > 0.7 ? '#0f0' : '#ff0';
+		ctx.fillText(`Pattern: ${player.movementPattern} (${(player.patternConfidence * 100).toFixed(0)}%)`, 15, 320);
+	}
+}
 
 // Gerar dungeon
 const dungeon = generateDungeon({
@@ -115,9 +459,47 @@ function loadRoomState() {
 	// Se a sala tem estado salvo, restaurar
 	if (currentRoom.savedState) {
 		// Restaurar inimigos com todas as propriedades
-		enemies = currentRoom.savedState.enemies.map(savedEnemy => ({
-			...savedEnemy
-		}));
+		enemies = currentRoom.savedState.enemies.map(savedEnemy => {
+			const enemy = {...savedEnemy};
+			
+			// === CORREÇÃO CRÍTICA PARA TIROS ===
+			// Garantir que timestamps sejam válidos
+			const currentTime = Date.now();
+			
+			// Se o timestamp salvo for muito antigo ou inválido, corrigir
+			if (!enemy.lastShotTime || 
+				enemy.lastShotTime < currentTime - 10000 || // Mais de 10 segundos atrás
+				enemy.lastShotTime > currentTime) { // Timestamp no futuro (inválido)
+				enemy.lastShotTime = currentTime - (enemy.shootInterval || 2000); // Permitir atirar imediatamente
+			}
+			
+			// Garantir que spawnTime seja válido
+			if (!enemy.spawnTime || 
+				enemy.spawnTime < currentTime - 10000 ||
+				enemy.spawnTime > currentTime) {
+				enemy.spawnTime = currentTime - (ENEMY_SPAWN_DELAY || 2000); // Permitir atacar imediatamente
+			}
+			
+			// Garantir que canAttack esteja correto
+			if (currentTime - enemy.spawnTime >= (ENEMY_SPAWN_DELAY || 2000)) {
+				enemy.canAttack = true;
+			}
+			
+			// Garantir que propriedades essenciais existam
+			if (!enemy.shootInterval) {
+				enemy.shootInterval = 2000; // Default
+			}
+			if (!enemy.aimAccuracy) {
+				enemy.aimAccuracy = 0.95; // Default alta precisão
+			}
+			if (enemy.vx === undefined) enemy.vx = 0;
+			if (enemy.vy === undefined) enemy.vy = 0;
+			if (enemy.wanderTimer === undefined) enemy.wanderTimer = 0;
+			
+			console.log(`Restored enemy ${enemy.type}: canAttack=${enemy.canAttack}, lastShot=${currentTime - enemy.lastShotTime}ms ago`);
+			
+			return enemy;
+		});
 		
 		// Restaurar bullets
 		bullets = currentRoom.savedState.bullets.map(savedBullet => ({
@@ -129,6 +511,7 @@ function loadRoomState() {
 			...savedPowerup
 		}));
 		
+		console.log(`Loaded room state: ${enemies.length} enemies, ${bullets.length} bullets, ${powerUps.length} powerups`);
 		return true; // Estado foi carregado
 	}
 	
@@ -859,6 +1242,12 @@ function goToNextFloor() {
 }
 
 function update() {
+	// Atualizar frame counter para sistema de input
+	updateFrame();
+	
+	// Coletar dados para treinamento da IA
+	collectAITrainingData();
+	
 	// Calcular deltaTime
 	const currentTime = Date.now();
 	deltaTime = (currentTime - lastFrameTime) / 1000; // Converter para segundos
@@ -1003,28 +1392,60 @@ function update() {
 		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
 		drawEnemy(ctx, enemy);
 		
-		// Inimigo atira no player com IA AVANÇADA de predição
+		// Inimigo atira no player com IA EXTREMAMENTE INSANA
 		if (updateResult && updateResult.shouldShoot) {
-			const bulletSpeed = 6;
+			const bulletSpeed = 8; // AUMENTADO de 6 para 8 - projéteis mais rápidos
 			
-			// Usar sistema avançado de predição que analisa padrões de movimento
-			const angle = calculateAdvancedPredictiveAngle(
-				enemy.x + enemy.size/2,  // posição X do inimigo
-				enemy.y + enemy.size/2,  // posição Y do inimigo
-				player,                   // objeto completo do player com histórico
-				bulletSpeed,              // velocidade do projétil
-				updateResult.aimAccuracy  // precisão do inimigo
-			);
+			// === USAR IA AVANÇADA PARA MIRA SUPREMA ===
+			let angle;
+			let aimMethod = 'advanced'; // Método de mira utilizado
+			
+			// Tentar usar predição da IA neural primeiro
+			const aiPrediction = getBestAIPrediction(enemy, bulletSpeed);
+			
+			if (aiPrediction && aiPrediction.confidence > 0.7) {
+				// IA NEURAL - Mira na predição da rede neural
+				angle = Math.atan2(
+					aiPrediction.position.y - (enemy.y + enemy.size/2),
+					aiPrediction.position.x - (enemy.x + enemy.size/2)
+				);
+				aimMethod = 'neural_ai';
+			} else {
+				// Fallback para sistema avançado existente
+				angle = calculateAdvancedPredictiveAngle(
+					enemy.x + enemy.size/2,  // posição X do inimigo
+					enemy.y + enemy.size/2,  // posição Y do inimigo
+					player,                   // objeto completo do player com histórico
+					bulletSpeed,              // velocidade do projétil
+					updateResult.aimAccuracy  // precisão do inimigo (98-99%)
+				);
+				aimMethod = 'advanced';
+			}
+			
+			// === APLICAR MODO DIFICULDADE INSANA ===
+			const insanityMode = true; // SEMPRE ATIVO
+			if (insanityMode) {
+				// Ajuste final para AIMBOT LITERALMENTE INSANO
+				const finalAccuracy = Math.min(updateResult.aimAccuracy * 1.1, 0.999); // Até 99.9%
+				
+				// Adicionar pequena perturbação baseada na "dificuldade"
+
+			}
 			
 			const bullet = createBullet(
 				enemy.x + enemy.size/2,
 				enemy.y + enemy.size/2,
 				angle,
-				bulletSpeed, // velocidade do tiro do inimigo
+				bulletSpeed, // velocidade AUMENTADA
 				20, // tamanho menor para tiros de inimigos
 				enemy.damage,
 				true // marcar como tiro de inimigo
 			);
+			
+			// Marcar método de mira no projétil (para debug)
+			bullet.aimMethod = aimMethod;
+			bullet.aiConfidence = aiPrediction ? aiPrediction.confidence : 0;
+			
 			bullets.push(bullet);
 		}
 		
@@ -1061,14 +1482,31 @@ function update() {
 		
 		// Cor diferente para tiros de inimigos
 		if (b.isEnemy) {
-			// Desenhar tiro de inimigo (círculo vermelho)
-			ctx.fillStyle = '#ff4444';
+			// Desenhar tiro de inimigo com indicação de IA
+			let bulletColor = '#ff4444';
+			let borderColor = '#880000';
+			
+			// Cores especiais baseadas no método de mira
+			if (b.aimMethod === 'neural_ai') {
+				bulletColor = '#ff0080'; // Rosa/magenta para IA neural
+				borderColor = '#880040';
+			}
+			
+			ctx.fillStyle = bulletColor;
 			ctx.beginPath();
 			ctx.arc(b.x, b.y, b.size/2, 0, Math.PI * 2);
 			ctx.fill();
-			ctx.strokeStyle = '#880000';
+			ctx.strokeStyle = borderColor;
 			ctx.lineWidth = 2;
 			ctx.stroke();
+			
+			// Mostrar indicador de confiança da IA (para debug)
+			if (keys['i'] && b.aiConfidence > 0) {
+				ctx.fillStyle = `rgba(255, 255, 255, ${b.aiConfidence})`;
+				ctx.beginPath();
+				ctx.arc(b.x, b.y, b.size/4, 0, Math.PI * 2);
+				ctx.fill();
+			}
 			
 			// Verificar colisão com player
 			const dx = b.x - (player.x + player.size/2);
@@ -1157,14 +1595,25 @@ function update() {
 		}
 	}
 	
+	// Debug info para IA
+	if (keys['i']) {
+		ctx.fillStyle = "yellow";
+		ctx.font = "14px Arial";
+		ctx.fillText("AI DEBUG MODE (hold I)", 10, roomHeight - 40);
+		ctx.fillText(`Neural predictions: ${aiPredictions.length}`, 10, roomHeight - 20);
+	}
+	
 	// Debug info
 	if (keys['p']) {
 		ctx.fillStyle = "yellow";
 		ctx.font = "16px Arial";
-		ctx.fillText("DEBUG: Press P to spawn trapdoor", 10, roomHeight - 20);
+		ctx.fillText("DEBUG: Press P to spawn trapdoor", 10, roomHeight - 60);
 	}
 	
 	drawPlayer(ctx, mouseX, mouseY);
+	
+	// Desenhar visualização da IA (se ativada)
+	drawAIVisualization();
 	
 	// Desenhar minimapa por último (para ficar por cima)
 	drawMinimap();
