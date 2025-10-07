@@ -50,8 +50,94 @@ let deltaTime = 0;
 setupKeyboard();
 setupMouse(canvas);
 
-// Spawn inimigos da sala atual
+// Sistema de persistência de estado das salas
+function saveRoomState() {
+	// Salvar estado atual da sala antes de sair
+	if (!currentRoom.savedState) {
+		currentRoom.savedState = {};
+	}
+	
+	// Salvar cópia profunda dos inimigos (posição, vida, tipo, etc)
+	currentRoom.savedState.enemies = enemies.map(enemy => ({
+		x: enemy.x,
+		y: enemy.y,
+		type: enemy.type,
+		size: enemy.size,
+		health: enemy.health,
+		maxHealth: enemy.maxHealth,
+		speed: enemy.speed,
+		damage: enemy.damage,
+		color: enemy.color,
+		behavior: enemy.behavior,
+		shootInterval: enemy.shootInterval,
+		lastShotTime: enemy.lastShotTime,
+		vx: enemy.vx,
+		vy: enemy.vy,
+		wanderTimer: enemy.wanderTimer,
+		dead: enemy.dead,
+		spawnTime: enemy.spawnTime,
+		canAttack: enemy.canAttack
+	}));
+	
+	// Salvar bullets (opcional, mas pode ser útil)
+	currentRoom.savedState.bullets = bullets.map(bullet => ({
+		x: bullet.x,
+		y: bullet.y,
+		vx: bullet.vx,
+		vy: bullet.vy,
+		size: bullet.size,
+		damage: bullet.damage,
+		img: bullet.img,
+		isEnemy: bullet.isEnemy
+	}));
+	
+	// Salvar powerups
+	currentRoom.savedState.powerUps = powerUps.map(p => ({
+		x: p.x,
+		y: p.y,
+		size: p.size,
+		effect: p.effect,
+		img: p.img,
+		color: p.color,
+		name: p.name
+	}));
+}
+
+function loadRoomState() {
+	// Limpar arrays primeiro
+	bullets = [];
+	powerUps = [];
+	enemies = [];
+	
+	// Se a sala tem estado salvo, restaurar
+	if (currentRoom.savedState) {
+		// Restaurar inimigos com todas as propriedades
+		enemies = currentRoom.savedState.enemies.map(savedEnemy => ({
+			...savedEnemy
+		}));
+		
+		// Restaurar bullets
+		bullets = currentRoom.savedState.bullets.map(savedBullet => ({
+			...savedBullet
+		}));
+		
+		// Restaurar powerups
+		powerUps = currentRoom.savedState.powerUps.map(savedPowerup => ({
+			...savedPowerup
+		}));
+		
+		return true; // Estado foi carregado
+	}
+	
+	return false; // Sem estado salvo, precisa gerar novo
+}
+
+// Spawn inimigos da sala atual (apenas primeira visita)
 function spawnRoomEnemies() {
+	// Tentar carregar estado salvo primeiro
+	if (loadRoomState()) {
+		return; // Estado foi restaurado, não precisa spawnar
+	}
 	// Limpar arrays
 	bullets = [];
 	powerUps = [];
@@ -75,21 +161,12 @@ function spawnRoomEnemies() {
 		}
 	}
 	
-	// Spawnar powerups APENAS em salas de tesouro
-	if (currentRoom.type === 'treasure') {
-		if (currentRoom.items && currentRoom.items.length > 0) {
-			currentRoom.items.forEach(item => {
-				const x = Math.random() * (roomWidth - 100) + 50;
-				const y = Math.random() * (roomHeight - 100) + 50;
-				spawnPowerUp(x, y);
-			});
-		}
-		// Garantir pelo menos 1 powerup em salas de tesouro
-		if (powerUps.length === 0) {
-			const x = roomWidth / 2;
-			const y = roomHeight / 2;
-			spawnPowerUp(x, y);
-		}
+	// Spawnar powerups APENAS em salas de tesouro E apenas se ainda não foi coletado
+	if (currentRoom.type === 'treasure' && !currentRoom.treasureCollected) {
+		// Garantir 1 powerup no centro da sala
+		const x = roomWidth / 2;
+		const y = roomHeight / 2;
+		spawnPowerUp(x, y);
 	}
 }
 
@@ -262,12 +339,28 @@ function checkRoomTransition() {
 	const wallThickness = 20;
 	const doorSize = 80;
 	
+	// Verificar se há inimigos vivos na sala atual
+	// Salas de início, tesouro e salas já limpas nunca bloqueiam
+	const hasEnemies = enemies.length > 0 && !currentRoom.cleared && 
+	                   currentRoom.type !== 'start' && currentRoom.type !== 'treasure';
+	
+	// Se há inimigos (e sala não está limpa), não permitir transição (portas trancadas)
+	if (hasEnemies) {
+		// Impedir que o player saia da sala
+		if (player.x < wallThickness) player.x = wallThickness;
+		if (player.x + player.size > roomWidth - wallThickness) player.x = roomWidth - wallThickness - player.size;
+		if (player.y < wallThickness) player.y = wallThickness;
+		if (player.y + player.size > roomHeight - wallThickness) player.y = roomHeight - wallThickness - player.size;
+		return; // Não processar transições
+	}
+	
 	// Porta Norte - só transita se estiver dentro da área da porta
 	if (currentRoom.doors.N && player.y < 0) {
 		if (player.x + player.size > (roomWidth - doorSize) / 2 && 
 			player.x < (roomWidth + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y - 1]?.[currentRoom.x];
 			if (newRoom) {
+				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.y = roomHeight - player.size - wallThickness;
 				spawnRoomEnemies();
@@ -283,6 +376,7 @@ function checkRoomTransition() {
 			player.x < (roomWidth + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y + 1]?.[currentRoom.x];
 			if (newRoom) {
+				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.y = wallThickness;
 				spawnRoomEnemies();
@@ -298,6 +392,7 @@ function checkRoomTransition() {
 			player.y < (roomHeight + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x + 1];
 			if (newRoom) {
+				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.x = wallThickness;
 				spawnRoomEnemies();
@@ -313,6 +408,7 @@ function checkRoomTransition() {
 			player.y < (roomHeight + doorSize) / 2) {
 			const newRoom = dungeon.grid[currentRoom.y]?.[currentRoom.x - 1];
 			if (newRoom) {
+				saveRoomState(); // Salvar estado antes de sair
 				currentRoom = newRoom;
 				player.x = roomWidth - player.size - wallThickness;
 				spawnRoomEnemies();
@@ -344,12 +440,78 @@ function drawRoom() {
 	if (!currentRoom.doors.W) ctx.fillRect(0, 0, wallThickness, roomHeight); // Oeste
 	
 	// Desenhar portas (buracos nas paredes)
-	ctx.fillStyle = '#555';
 	const doorSize = 80;
-	if (currentRoom.doors.N) ctx.fillRect((roomWidth - doorSize) / 2, 0, doorSize, wallThickness);
-	if (currentRoom.doors.S) ctx.fillRect((roomWidth - doorSize) / 2, roomHeight - wallThickness, doorSize, wallThickness);
-	if (currentRoom.doors.E) ctx.fillRect(roomWidth - wallThickness, (roomHeight - doorSize) / 2, wallThickness, doorSize);
-	if (currentRoom.doors.W) ctx.fillRect(0, (roomHeight - doorSize) / 2, wallThickness, doorSize);
+	// Só mostrar como trancada se tem inimigos E sala não está limpa E não é sala especial
+	const hasEnemies = enemies.length > 0 && !currentRoom.cleared && 
+	                   currentRoom.type !== 'start' && currentRoom.type !== 'treasure';
+	
+	// Se há inimigos, desenhar portas trancadas (vermelhas), senão normais (cinza)
+	ctx.fillStyle = hasEnemies ? '#8B0000' : '#555';
+	
+	if (currentRoom.doors.N) {
+		ctx.fillRect((roomWidth - doorSize) / 2, 0, doorSize, wallThickness);
+		// Desenhar "X" se trancada
+		if (hasEnemies) {
+			ctx.strokeStyle = '#FF0000';
+			ctx.lineWidth = 3;
+			const doorX = (roomWidth - doorSize) / 2;
+			const doorY = 0;
+			ctx.beginPath();
+			ctx.moveTo(doorX, doorY);
+			ctx.lineTo(doorX + doorSize, doorY + wallThickness);
+			ctx.moveTo(doorX + doorSize, doorY);
+			ctx.lineTo(doorX, doorY + wallThickness);
+			ctx.stroke();
+		}
+	}
+	
+	if (currentRoom.doors.S) {
+		ctx.fillRect((roomWidth - doorSize) / 2, roomHeight - wallThickness, doorSize, wallThickness);
+		if (hasEnemies) {
+			ctx.strokeStyle = '#FF0000';
+			ctx.lineWidth = 3;
+			const doorX = (roomWidth - doorSize) / 2;
+			const doorY = roomHeight - wallThickness;
+			ctx.beginPath();
+			ctx.moveTo(doorX, doorY);
+			ctx.lineTo(doorX + doorSize, doorY + wallThickness);
+			ctx.moveTo(doorX + doorSize, doorY);
+			ctx.lineTo(doorX, doorY + wallThickness);
+			ctx.stroke();
+		}
+	}
+	
+	if (currentRoom.doors.E) {
+		ctx.fillRect(roomWidth - wallThickness, (roomHeight - doorSize) / 2, wallThickness, doorSize);
+		if (hasEnemies) {
+			ctx.strokeStyle = '#FF0000';
+			ctx.lineWidth = 3;
+			const doorX = roomWidth - wallThickness;
+			const doorY = (roomHeight - doorSize) / 2;
+			ctx.beginPath();
+			ctx.moveTo(doorX, doorY);
+			ctx.lineTo(doorX + wallThickness, doorY + doorSize);
+			ctx.moveTo(doorX + wallThickness, doorY);
+			ctx.lineTo(doorX, doorY + doorSize);
+			ctx.stroke();
+		}
+	}
+	
+	if (currentRoom.doors.W) {
+		ctx.fillRect(0, (roomHeight - doorSize) / 2, wallThickness, doorSize);
+		if (hasEnemies) {
+			ctx.strokeStyle = '#FF0000';
+			ctx.lineWidth = 3;
+			const doorX = 0;
+			const doorY = (roomHeight - doorSize) / 2;
+			ctx.beginPath();
+			ctx.moveTo(doorX, doorY);
+			ctx.lineTo(doorX + wallThickness, doorY + doorSize);
+			ctx.moveTo(doorX + wallThickness, doorY);
+			ctx.lineTo(doorX, doorY + doorSize);
+			ctx.stroke();
+		}
+	}
 	
 	// Desenhar trapdoor se boss foi derrotado e estamos na sala do boss
 	if (bossDefeated && currentRoom.type === 'boss') {
@@ -811,6 +973,10 @@ function update() {
 		if(distance < (player.size/2 + p.size/2)) {
 			p.effect();
 			powerUps.splice(i, 1);
+			// Marcar sala de tesouro como coletada
+			if (currentRoom.type === 'treasure') {
+				currentRoom.treasureCollected = true;
+			}
 		}
 	});
 
