@@ -62,6 +62,7 @@ export function calculatePredictiveAngle(ex, ey, px, py, vx, vy, bulletSpeed) {
 
 /**
  * Sistema AVANÇADO de predição que analisa padrões de movimento
+ * VERSÃO OTIMIZADA PARA PRECISÃO MÁXIMA
  * @param {number} ex - posição X do atirador
  * @param {number} ey - posição Y do atirador
  * @param {object} player - objeto do player com histórico de movimento
@@ -84,29 +85,29 @@ export function calculateAdvancedPredictiveAngle(ex, ey, player, bulletSpeed, ac
 	// Tempo estimado para projétil alcançar o alvo
 	const timeToImpact = distance / bulletSpeed;
 	
-	// PREDIÇÃO BASEADA EM PADRÃO DE MOVIMENTO
+	// USAR ALGORITMO DE INTERCEPTAÇÃO BALÍSTICA para base
+	// Este é o método mais preciso matematicamente
+	const baseAngle = calculatePredictiveAngle(ex, ey, px, py, vx, vy, bulletSpeed);
+	
+	// PREDIÇÃO BASEADA EM PADRÃO DE MOVIMENTO (para refinar ainda mais)
 	let predictedX = px;
 	let predictedY = py;
 	
 	const pattern = player.movementPattern || 'random';
-	const confidence = player.patternConfidence || 0;
+	const confidence = Math.max(player.patternConfidence || 0, 0.5); // Mínimo de 50% de confiança
 	
 	switch (pattern) {
 		case 'circular':
-			// Prever continuação do movimento circular
-			predictedX = px + vx * timeToImpact + ax * timeToImpact * timeToImpact * 0.5;
-			predictedY = py + vy * timeToImpact + ay * timeToImpact * timeToImpact * 0.5;
-			
-			// Adicionar predição de curvatura circular
+			// Prever continuação do movimento circular com alta precisão
 			if (player.movementHistory && player.movementHistory.length >= 10) {
 				const history = player.movementHistory.slice(-10);
 				
-				// Calcular centro do círculo
+				// Calcular centro do círculo com maior precisão
 				const centerX = history.reduce((sum, h) => sum + h.x, 0) / history.length;
 				const centerY = history.reduce((sum, h) => sum + h.y, 0) / history.length;
 				const radius = Math.sqrt((px - centerX) ** 2 + (py - centerY) ** 2);
 				
-				// Calcular velocidade angular
+				// Calcular velocidade angular com maior precisão
 				const angles = history.map(h => Math.atan2(h.y - centerY, h.x - centerX));
 				let totalAngularChange = 0;
 				for (let i = 1; i < angles.length; i++) {
@@ -115,99 +116,107 @@ export function calculateAdvancedPredictiveAngle(ex, ey, player, bulletSpeed, ac
 					while (diff < -Math.PI) diff += 2 * Math.PI;
 					totalAngularChange += diff;
 				}
-				const angularVelocity = totalAngularChange / angles.length;
+				const angularVelocity = totalAngularChange / (angles.length - 1);
 				
-				// Prever posição futura no círculo
+				// Prever posição futura no círculo com compensação aumentada
 				const currentAngle = Math.atan2(py - centerY, px - centerX);
-				const futureAngle = currentAngle + angularVelocity * timeToImpact * 2; // Multiplicador para melhor predição
+				const futureAngle = currentAngle + angularVelocity * timeToImpact * 3; // Aumentado para melhor antecipação
 				
 				predictedX = centerX + Math.cos(futureAngle) * radius;
 				predictedY = centerY + Math.sin(futureAngle) * radius;
-			}
-			break;
-			
-		case 'zigzag':
-			// Prever mudança de direção iminente
-			const timeSinceLastChange = player.lastDirectionChange || 0;
-			const avgChangeInterval = 5; // frames médios entre mudanças
-			
-			if (timeSinceLastChange < avgChangeInterval) {
-				// Player provavelmente vai mudar de direção em breve
-				// Mirar entre posição atual e oposta à velocidade
-				const oppositeX = px - vx * timeToImpact * 0.5;
-				const oppositeY = py - vy * timeToImpact * 0.5;
-				predictedX = (px + oppositeX) / 2;
-				predictedY = (py + oppositeY) / 2;
 			} else {
-				// Predição linear com aceleração
+				// Fallback: predição com física
 				predictedX = px + vx * timeToImpact + ax * timeToImpact * timeToImpact;
 				predictedY = py + vy * timeToImpact + ay * timeToImpact * timeToImpact;
 			}
 			break;
 			
-		case 'strafe':
-			// Movimento lateral consistente - predição mais confiável
-			predictedX = px + vx * timeToImpact * 1.2; // Multiplicador para compensar
-			predictedY = py + vy * timeToImpact * 1.2;
+		case 'zigzag':
+			// Predição para zigzag - tentar prever o meio do próximo movimento
+			// Usar média ponderada de possíveis direções
+			const straightPredX = px + vx * timeToImpact;
+			const straightPredY = py + vy * timeToImpact;
+			const reversePredX = px - vx * timeToImpact * 0.3;
+			const reversePredY = py - vy * timeToImpact * 0.3;
 			
-			// Usar aceleração
-			predictedX += ax * timeToImpact * timeToImpact * 0.5;
-			predictedY += ay * timeToImpact * timeToImpact * 0.5;
+			// Combinar predições com peso baseado no histórico
+			predictedX = straightPredX * 0.6 + reversePredX * 0.4;
+			predictedY = straightPredY * 0.6 + reversePredY * 0.4;
 			break;
 			
-		case 'straight':
-			// Movimento reto - predição muito confiável
-			predictedX = px + vx * timeToImpact * 1.5;
+		case 'strafe':
+			// Movimento lateral - predição altamente confiável
+			predictedX = px + vx * timeToImpact * 1.5; // Maior antecipação
 			predictedY = py + vy * timeToImpact * 1.5;
 			
-			// Considerar aceleração
+			// Adicionar aceleração
 			predictedX += ax * timeToImpact * timeToImpact;
 			predictedY += ay * timeToImpact * timeToImpact;
 			break;
 			
+		case 'straight':
+			// Movimento reto - predição PERFEITA possível
+			predictedX = px + vx * timeToImpact * 2.0; // Máxima antecipação
+			predictedY = py + vy * timeToImpact * 2.0;
+			
+			// Aceleração com peso total
+			predictedX += ax * timeToImpact * timeToImpact * 1.5;
+			predictedY += ay * timeToImpact * timeToImpact * 1.5;
+			break;
+			
 		case 'random':
 		default:
-			// Sem padrão claro - usar predição básica com peso reduzido
-			predictedX = px + vx * timeToImpact * 0.7;
-			predictedY = py + vy * timeToImpact * 0.7;
+			// Usar predição balística básica com física aprimorada
+			predictedX = px + vx * timeToImpact * 1.2;
+			predictedY = py + vy * timeToImpact * 1.2;
+			
+			// Adicionar aceleração
+			predictedX += ax * timeToImpact * timeToImpact * 0.5;
+			predictedY += ay * timeToImpact * timeToImpact * 0.5;
 			break;
 	}
 	
-	// PREDIÇÃO DE PRÓXIMA MUDANÇA DE DIREÇÃO
-	// Analisar histórico para detectar mudanças frequentes
-	if (player.movementHistory && player.movementHistory.length >= 10) {
-		const recentChanges = player.directionChanges || 0;
-		if (recentChanges > 3) {
-			// Player muda muito de direção - adicionar incerteza
-			const uncertainty = (recentChanges / 10) * 30; // até 30px de spread
-			predictedX += (Math.random() - 0.5) * uncertainty;
-			predictedY += (Math.random() - 0.5) * uncertainty;
-		}
-	}
-	
-	// COMPENSAÇÃO POR DISTÂNCIA
-	// Quanto mais longe, mais incerta a predição
-	const distanceFactor = Math.min(distance / 400, 1.5);
+	// COMPENSAÇÃO POR DISTÂNCIA (melhorada)
+	// Quanto mais longe, mais importante é a predição
+	const distanceFactor = Math.min(distance / 300, 2.0); // Aumentado o fator
 	predictedX = px + (predictedX - px) * distanceFactor;
 	predictedY = py + (predictedY - py) * distanceFactor;
 	
-	// APLICAR CONFIANÇA DO PADRÃO
+	// APLICAR CONFIANÇA DO PADRÃO com peso maior
 	// Quanto maior a confiança, mais peso na predição
-	const finalPredictedX = px + (predictedX - px) * confidence;
-	const finalPredictedY = py + (predictedY - py) * confidence;
+	const patternWeight = Math.min(confidence * 1.2, 1.0); // Aumentar peso da confiança
+	const finalPredictedX = px + (predictedX - px) * patternWeight;
+	const finalPredictedY = py + (predictedY - py) * patternWeight;
 	
-	// Calcular ângulo final
-	const predictedAngle = Math.atan2(finalPredictedY - ey, finalPredictedX - ex);
+	// Calcular ângulo baseado na predição de padrão
+	const patternAngle = Math.atan2(finalPredictedY - ey, finalPredictedX - ex);
 	
-	// Interpolar com ângulo direto baseado na precisão do inimigo
+	// COMBINAR predição balística com predição de padrão
+	// A predição balística já é muito precisa, então usar como base
+	let combinedAngle;
+	if (confidence > 0.6) {
+		// Alta confiança no padrão - usar mais o padrão
+		const weight = accuracy * confidence;
+		let angleDiff = patternAngle - baseAngle;
+		while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+		while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+		combinedAngle = baseAngle + angleDiff * weight;
+	} else {
+		// Baixa confiança - usar principalmente balística
+		let angleDiff = patternAngle - baseAngle;
+		while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+		while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+		combinedAngle = baseAngle + angleDiff * accuracy * 0.5;
+	}
+	
+	// Para accuracy = 1.0, retornar o ângulo combinado otimizado
+	// Para accuracy < 1.0, interpolar com ângulo direto
 	const directAngle = Math.atan2(dy, dx);
+	let finalAngleDiff = combinedAngle - directAngle;
+	while (finalAngleDiff > Math.PI) finalAngleDiff -= 2 * Math.PI;
+	while (finalAngleDiff < -Math.PI) finalAngleDiff += 2 * Math.PI;
 	
-	let angleDiff = predictedAngle - directAngle;
-	while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-	while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-	
-	// Aplicar precisão do inimigo
-	const finalAngle = directAngle + angleDiff * accuracy;
+	const finalAngle = directAngle + finalAngleDiff * accuracy;
 	
 	return finalAngle;
 }
@@ -223,7 +232,7 @@ export function createEnemy(x, y, type = 'fly') {
 			behavior: 'chase', // chase, wander, shoot
 			shootCooldown: 0,
 			shootInterval: 3000, // atira a cada 3 segundos
-			aimAccuracy: 0.8 // 80% de precisão na mira preditiva (0.0 = sem predição, 1.0 = predição perfeita)
+			aimAccuracy: 0.98 // 98% de precisão na mira preditiva (INSANAMENTE ALTA)
 		},
 		spider: {
 			size: 35,
@@ -234,7 +243,7 @@ export function createEnemy(x, y, type = 'fly') {
 			behavior: 'wander',
 			shootCooldown: 0,
 			shootInterval: 4000, // atira a cada 4 segundos
-			aimAccuracy: 0.6 // 60% de precisão (mira pior)
+			aimAccuracy: 0.95 // 95% de precisão (alta precisão)
 		},
 		shooter: {
 			size: 32,
@@ -245,7 +254,7 @@ export function createEnemy(x, y, type = 'fly') {
 			behavior: 'shoot',
 			shootCooldown: 0,
 			shootInterval: 2500, // atira a cada 2.5 segundos (mais rápido)
-			aimAccuracy: 0.95 // 95% de precisão (atirador expert)
+			aimAccuracy: 1.0 // 100% de precisão PERFEITA (atirador expert supremo)
 		}
 	};
 	
@@ -380,6 +389,38 @@ export function drawEnemy(ctx, enemy) {
 		ctx.fill();
 	}
 	
+	// === VISUALIZAÇÃO DE PRECISÃO DA IA ===
+	// Mostrar ícone de mira baseado na precisão
+	const centerX = enemy.x + enemy.size/2;
+	const centerY = enemy.y + enemy.size/2;
+	
+	// Anel de precisão (cor baseada na accuracy)
+	let accuracyColor;
+	if (enemy.aimAccuracy >= 0.95) accuracyColor = '#ff0000'; // Vermelho = perigo máximo
+	else if (enemy.aimAccuracy >= 0.85) accuracyColor = '#ff8800'; // Laranja = perigo alto
+	else accuracyColor = '#ffff00'; // Amarelo = perigo médio
+	
+	// Desenhar anel de mira pulsante
+	const pulse = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+	ctx.strokeStyle = accuracyColor;
+	ctx.lineWidth = 2;
+	ctx.globalAlpha = pulse * 0.6;
+	ctx.beginPath();
+	ctx.arc(centerX, centerY, enemy.size/2 + 3, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.globalAlpha = 1.0;
+	
+	// Indicador de tipo/comportamento (símbolo no centro)
+	ctx.fillStyle = '#fff';
+	ctx.font = 'bold 16px Arial';
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	let symbol = '•';
+	if (enemy.behavior === 'shoot') symbol = '⊕'; // Símbolo de mira para atiradores
+	else if (enemy.behavior === 'chase') symbol = '⚡'; // Raio para perseguidores
+	else if (enemy.behavior === 'wander') symbol = '∿'; // Onda para errantes
+	ctx.fillText(symbol, centerX, centerY);
+	
 	// Barra de vida
 	if (enemy.health < enemy.maxHealth) {
 		const barWidth = enemy.size;
@@ -396,6 +437,17 @@ export function drawEnemy(ctx, enemy) {
 		ctx.fillStyle = healthPercent > 0.5 ? '#0f0' : (healthPercent > 0.25 ? '#ff0' : '#f00');
 		ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
 	}
+	
+	// === MOSTRAR PRECISÃO ACIMA DO INIMIGO ===
+	ctx.font = 'bold 10px Arial';
+	ctx.fillStyle = accuracyColor;
+	ctx.strokeStyle = '#000';
+	ctx.lineWidth = 2;
+	const accuracyText = `${(enemy.aimAccuracy * 100).toFixed(0)}%`;
+	ctx.strokeText(accuracyText, centerX, enemy.y - 18);
+	ctx.fillText(accuracyText, centerX, enemy.y - 18);
+	ctx.textAlign = 'left';
+	ctx.textBaseline = 'alphabetic';
 }
 
 export function checkEnemyCollision(enemy, player) {

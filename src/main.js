@@ -726,21 +726,42 @@ function drawHealth() {
 	ctx.strokeText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
 	ctx.fillText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
 	
-	// Padrão de movimento detectado (DEBUG - pode ser removido)
-	if (player.movementPattern && player.patternConfidence > 0.3) {
-		const patternIcons = {
-			circular: '🔄',
-			zigzag: '⚡',
-			strafe: '↔️',
-			straight: '➡️',
-			random: '❓'
-		};
-		const icon = patternIcons[player.movementPattern] || '❓';
-		const confidence = (player.patternConfidence * 100).toFixed(0);
-		ctx.fillStyle = player.patternConfidence > 0.6 ? '#ff0' : '#aaa';
-		ctx.strokeText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
-		ctx.fillText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
-	}
+	// === AI VISUALIZER: Padrão de movimento detectado ===
+	// Mostrar SEMPRE para debugging da IA
+	ctx.font = 'bold 18px Arial';
+	const patternIcons = {
+		circular: '🔄',
+		zigzag: '⚡',
+		strafe: '↔️',
+		straight: '➡️',
+		random: '❓'
+	};
+	const icon = patternIcons[player.movementPattern] || '❓';
+	const confidence = (player.patternConfidence * 100).toFixed(0);
+	
+	// Cor baseada na confiança (verde = alta, amarelo = média, vermelho = baixa)
+	let patternColor = '#f00'; // vermelho
+	if (player.patternConfidence > 0.7) patternColor = '#0f0'; // verde
+	else if (player.patternConfidence > 0.4) patternColor = '#ff0'; // amarelo
+	
+	ctx.fillStyle = patternColor;
+	ctx.strokeStyle = '#000';
+	ctx.lineWidth = 3;
+	ctx.strokeText(`${icon} Pattern: ${player.movementPattern.toUpperCase()}`, statsX, statsY + 60);
+	ctx.fillText(`${icon} Pattern: ${player.movementPattern.toUpperCase()}`, statsX, statsY + 60);
+	
+	// Mostrar confiança do padrão
+	ctx.strokeText(`📊 AI Confidence: ${confidence}%`, statsX, statsY + 80);
+	ctx.fillText(`📊 AI Confidence: ${confidence}%`, statsX, statsY + 80);
+	
+	// Mostrar velocidade instantânea
+	const instantSpeed = Math.sqrt(player.velocityX ** 2 + player.velocityY ** 2).toFixed(1);
+	ctx.strokeText(`💨 Velocity: ${instantSpeed}`, statsX, statsY + 100);
+	ctx.fillText(`💨 Velocity: ${instantSpeed}`, statsX, statsY + 100);
+	
+	// Mostrar mudanças de direção (importante para AI)
+	ctx.strokeText(`🔀 Dir Changes: ${player.directionChanges}`, statsX, statsY + 120);
+	ctx.fillText(`🔀 Dir Changes: ${player.directionChanges}`, statsX, statsY + 120);
 }
 
 function drawHeart(ctx, x, y, size, full) {
@@ -1003,6 +1024,46 @@ function update() {
 		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
 		drawEnemy(ctx, enemy);
 		
+		// === VISUALIZAR LINHA DE MIRA DOS INIMIGOS ===
+		// Mostrar para onde o inimigo vai atirar (apenas se pode atirar em breve)
+		const timeSinceLastShot = Date.now() - enemy.lastShotTime;
+		const timeUntilNextShot = enemy.shootInterval - timeSinceLastShot;
+		
+		if (timeUntilNextShot < 500 && enemy.canAttack && updateResult) { // 0.5 segundos antes de atirar
+			const bulletSpeed = 6;
+			
+			// Calcular ângulo preditivo
+			const angle = calculateAdvancedPredictiveAngle(
+				enemy.x + enemy.size/2,
+				enemy.y + enemy.size/2,
+				player,
+				bulletSpeed,
+				updateResult.aimAccuracy
+			);
+			
+			// Desenhar linha de mira
+			const lineLength = 150;
+			const endX = enemy.x + enemy.size/2 + Math.cos(angle) * lineLength;
+			const endY = enemy.y + enemy.size/2 + Math.sin(angle) * lineLength;
+			
+			// Linha pulsante baseada no tempo até o tiro
+			const intensity = 1 - (timeUntilNextShot / 500);
+			ctx.strokeStyle = `rgba(255, 0, 0, ${intensity * 0.6})`;
+			ctx.lineWidth = 2;
+			ctx.setLineDash([5, 5]);
+			ctx.beginPath();
+			ctx.moveTo(enemy.x + enemy.size/2, enemy.y + enemy.size/2);
+			ctx.lineTo(endX, endY);
+			ctx.stroke();
+			ctx.setLineDash([]); // Reset dash
+			
+			// Ponto de destino
+			ctx.fillStyle = `rgba(255, 0, 0, ${intensity * 0.8})`;
+			ctx.beginPath();
+			ctx.arc(endX, endY, 3, 0, Math.PI * 2);
+			ctx.fill();
+		}
+		
 		// Inimigo atira no player com IA AVANÇADA de predição
 		if (updateResult && updateResult.shouldShoot) {
 			const bulletSpeed = 6;
@@ -1165,6 +1226,45 @@ function update() {
 	}
 	
 	drawPlayer(ctx, mouseX, mouseY);
+	
+	// === VISUALIZAÇÃO DA PREDIÇÃO DE MOVIMENTO ===
+	// Mostrar onde a IA acha que o player vai estar
+	if (player.movementPattern !== 'random' && player.patternConfidence > 0.4) {
+		const vx = player.velocityX || 0;
+		const vy = player.velocityY || 0;
+		const speed = Math.sqrt(vx * vx + vy * vy);
+		
+		if (speed > 0.5) { // Apenas se estiver se movendo
+			// Prever posição em 0.5 segundos
+			const predictionTime = 0.5;
+			let futureX = player.x + player.size/2 + vx * predictionTime * 60; // 60 frames/s
+			let futureY = player.y + player.size/2 + vy * predictionTime * 60;
+			
+			// Desenhar sombra do player na posição prevista
+			ctx.fillStyle = 'rgba(255, 0, 0, 0.3)';
+			ctx.beginPath();
+			ctx.arc(futureX, futureY, player.size/2, 0, Math.PI * 2);
+			ctx.fill();
+			
+			// Linha conectando posição atual à prevista
+			ctx.strokeStyle = 'rgba(255, 0, 0, 0.4)';
+			ctx.lineWidth = 2;
+			ctx.setLineDash([5, 5]);
+			ctx.beginPath();
+			ctx.moveTo(player.x + player.size/2, player.y + player.size/2);
+			ctx.lineTo(futureX, futureY);
+			ctx.stroke();
+			ctx.setLineDash([]);
+			
+			// Texto explicativo
+			ctx.font = '12px Arial';
+			ctx.fillStyle = '#f00';
+			ctx.strokeStyle = '#000';
+			ctx.lineWidth = 2;
+			ctx.strokeText('AI Prediction', futureX - 30, futureY - player.size/2 - 5);
+			ctx.fillText('AI Prediction', futureX - 30, futureY - player.size/2 - 5);
+		}
+	}
 	
 	// Desenhar minimapa por último (para ficar por cima)
 	drawMinimap();
