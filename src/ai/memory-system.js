@@ -64,9 +64,41 @@ class LongTermMemorySystem {
 	
 	compressSituation(situation) {
 		// Comprimir dados da situação mantendo informações essenciais
+		if (!situation) {
+			return {
+				playerPos: { x: 0, y: 0 },
+				playerHealth: 100,
+				enemyCount: 0,
+				powerupCount: 0,
+				roomType: 'unknown',
+				timeInRoom: 0,
+				movementPattern: 'unknown',
+				averageSpeed: 0,
+				directionChanges: 0
+			};
+		}
+		
+		// Se situation é um array (features), criar um objeto simplificado
+		if (Array.isArray(situation)) {
+			return {
+				playerPos: { x: Math.round((situation[0] || 0) * 100), y: Math.round((situation[1] || 0) * 100) },
+				playerHealth: Math.round((situation[2] || 0.5) * 100),
+				enemyCount: Math.round((situation[3] || 0) * 10),
+				powerupCount: Math.round((situation[4] || 0) * 10),
+				roomType: 'unknown',
+				timeInRoom: 0,
+				movementPattern: 'unknown',
+				averageSpeed: Math.round((situation[5] || 0) * 100),
+				directionChanges: Math.round((situation[6] || 0) * 20)
+			};
+		}
+		
 		return {
-			playerPos: { x: Math.round(situation.x / 10) * 10, y: Math.round(situation.y / 10) * 10 },
-			playerHealth: Math.round(situation.health / 10) * 10,
+			playerPos: { 
+				x: Math.round((situation.x || 0) / 10) * 10, 
+				y: Math.round((situation.y || 0) / 10) * 10 
+			},
+			playerHealth: Math.round((situation.health || 100) / 10) * 10,
 			enemyCount: situation.enemyCount || 0,
 			powerupCount: situation.powerupCount || 0,
 			roomType: situation.roomType || 'unknown',
@@ -88,31 +120,158 @@ class LongTermMemorySystem {
 		return compressed;
 	}
 	
+	findDominantMovement(actions) {
+		// Encontrar movimento dominante na sequência de ações
+		if (!actions || !Array.isArray(actions) || actions.length === 0) {
+			return 'idle';
+		}
+		
+		const movements = actions.filter(a => a && (a.type === 'movement' || a.type === 'move'));
+		if (movements.length === 0) return 'idle';
+		
+		const directions = {
+			up: 0, down: 0, left: 0, right: 0,
+			upLeft: 0, upRight: 0, downLeft: 0, downRight: 0
+		};
+		
+		movements.forEach(move => {
+			if (move.direction) {
+				directions[move.direction] = (directions[move.direction] || 0) + 1;
+			} else if (move.dx !== undefined && move.dy !== undefined) {
+				// Calcular direção baseado em dx/dy
+				if (Math.abs(move.dx) > Math.abs(move.dy)) {
+					directions[move.dx > 0 ? 'right' : 'left']++;
+				} else if (Math.abs(move.dy) > Math.abs(move.dx)) {
+					directions[move.dy > 0 ? 'down' : 'up']++;
+				}
+			}
+		});
+		
+		// Retornar direção mais comum
+		return Object.keys(directions).reduce((a, b) => 
+			directions[a] > directions[b] ? a : b
+		) || 'idle';
+	}
+	
+	calculateMovementDuration(actions) {
+		// Calcular duração total de movimento nas ações
+		if (!actions || !Array.isArray(actions)) return 0;
+		
+		const movementActions = actions.filter(a => 
+			a.type === 'movement' || a.type === 'move' || 
+			(a.dx !== undefined && a.dy !== undefined)
+		);
+		
+		if (movementActions.length === 0) return 0;
+		
+		// Calcular duração baseada no número de ações de movimento
+		// Assumindo ~16ms por frame (60 FPS)
+		return movementActions.length * 16;
+	}
+	
+	calculateActionComplexity(actions) {
+		// Calcular complexidade da sequência de ações
+		if (!actions || !Array.isArray(actions) || actions.length === 0) return 0;
+		
+		let complexity = 0;
+		let directionChanges = 0;
+		let actionTypes = new Set();
+		let previousDirection = null;
+		
+		// Contar tipos diferentes de ação
+		actions.forEach(action => {
+			if (action.type) actionTypes.add(action.type);
+		});
+		
+		// Contar mudanças de direção
+		actions.forEach(action => {
+			let currentDirection = null;
+			
+			if (action.direction) {
+				currentDirection = action.direction;
+			} else if (action.dx !== undefined && action.dy !== undefined) {
+				if (Math.abs(action.dx) > Math.abs(action.dy)) {
+					currentDirection = action.dx > 0 ? 'right' : 'left';
+				} else if (Math.abs(action.dy) > Math.abs(action.dx)) {
+					currentDirection = action.dy > 0 ? 'down' : 'up';
+				}
+			}
+			
+			if (currentDirection && previousDirection && currentDirection !== previousDirection) {
+				directionChanges++;
+			}
+			previousDirection = currentDirection;
+		});
+		
+		// Calcular complexidade baseada em diversos fatores
+		complexity += actionTypes.size * 0.2; // Variedade de tipos de ação
+		complexity += (directionChanges / Math.max(1, actions.length)) * 0.5; // Frequência de mudanças
+		complexity += Math.min(1, actions.length / 60) * 0.3; // Duração da sequência
+		
+		return Math.min(1.0, complexity);
+	}
+	
 	calculateImportance(situation, outcome) {
 		let importance = 0.5; // Base importance
 		
+		if (!situation || !outcome) {
+			return importance;
+		}
+		
+		// Para arrays (features), acessar valores por índice
+		let health, enemyCount;
+		if (Array.isArray(situation)) {
+			health = (situation[2] || 0.5) * 100; // Normalizado para 0-100
+			enemyCount = (situation[3] || 0) * 10; // Normalizado
+		} else {
+			health = situation.health || 100;
+			enemyCount = situation.enemyCount || 0;
+		}
+		
 		// Situações com baixa saúde são mais importantes
-		if (situation.health < 30) importance += 0.3;
+		if (health < 30) importance += 0.3;
 		
 		// Muitos inimigos = situação importante
-		if (situation.enemyCount > 3) importance += 0.2;
+		if (enemyCount > 3) importance += 0.2;
 		
 		// Outcomes negativos (morte) são mais importantes para aprender
 		if (outcome.died) importance += 0.4;
 		
 		// Outcomes muito positivos também
-		if (outcome.score > 100) importance += 0.2;
+		if (outcome.score && outcome.score > 100) importance += 0.2;
 		
 		// Situações raras são importantes
-		const similarity = this.findSimilarEpisodes(situation, 0.8);
-		if (similarity.length < 5) importance += 0.3;
+		try {
+			const similarity = this.findSimilarEpisodes(situation, 0.8);
+			if (similarity.length < 5) importance += 0.3;
+		} catch (error) {
+			// Se houver erro na comparação, manter importância base
+			console.warn('🧠 Erro calculando similaridade para importância:', error.message);
+		}
 		
 		return Math.min(1.0, importance);
 	}
 	
 	hashSituation(situation) {
 		// Hash simples para indexação rápida
-		const str = `${Math.floor(situation.x/50)}_${Math.floor(situation.y/50)}_${Math.floor(situation.health/20)}_${situation.enemyCount}`;
+		if (!situation) {
+			return '0_0_100_0';
+		}
+		
+		let x, y, health, enemyCount;
+		if (Array.isArray(situation)) {
+			x = (situation[0] || 0) * 100;
+			y = (situation[1] || 0) * 100;
+			health = (situation[2] || 0.5) * 100;
+			enemyCount = (situation[3] || 0) * 10;
+		} else {
+			x = situation.x || 0;
+			y = situation.y || 0;
+			health = situation.health || 100;
+			enemyCount = situation.enemyCount || 0;
+		}
+		
+		const str = `${Math.floor(x/50)}_${Math.floor(y/50)}_${Math.floor(health/20)}_${enemyCount}`;
 		return str;
 	}
 	
@@ -130,30 +289,58 @@ class LongTermMemorySystem {
 	}
 	
 	calculateSituationSimilarity(sit1, sit2) {
+		if (!sit1 || !sit2) return 0;
+		
 		let similarity = 0;
 		let factors = 0;
 		
+		// Extrair valores de sit1
+		let x1, y1, health1, enemyCount1, roomType1, movementPattern1;
+		if (Array.isArray(sit1)) {
+			x1 = (sit1[0] || 0) * 100;
+			y1 = (sit1[1] || 0) * 100;
+			health1 = (sit1[2] || 0.5) * 100;
+			enemyCount1 = (sit1[3] || 0) * 10;
+			roomType1 = 'unknown';
+			movementPattern1 = 'unknown';
+		} else {
+			x1 = sit1.x || 0;
+			y1 = sit1.y || 0;
+			health1 = sit1.health || 100;
+			enemyCount1 = sit1.enemyCount || 0;
+			roomType1 = sit1.roomType || 'unknown';
+			movementPattern1 = sit1.movementPattern || 'unknown';
+		}
+		
+		// Extrair valores de sit2 (sempre comprimido como objeto)
+		const x2 = sit2.playerPos ? sit2.playerPos.x : 0;
+		const y2 = sit2.playerPos ? sit2.playerPos.y : 0;
+		const health2 = sit2.playerHealth || 100;
+		const enemyCount2 = sit2.enemyCount || 0;
+		const roomType2 = sit2.roomType || 'unknown';
+		const movementPattern2 = sit2.movementPattern || 'unknown';
+		
 		// Proximidade espacial
-		const spatialDist = Math.sqrt((sit1.x - sit2.playerPos.x)**2 + (sit1.y - sit2.playerPos.y)**2);
+		const spatialDist = Math.sqrt((x1 - x2)**2 + (y1 - y2)**2);
 		similarity += Math.max(0, 1 - spatialDist / 200);
 		factors++;
 		
 		// Similaridade de saúde
-		const healthDiff = Math.abs(sit1.health - sit2.playerHealth);
+		const healthDiff = Math.abs(health1 - health2);
 		similarity += Math.max(0, 1 - healthDiff / 100);
 		factors++;
 		
 		// Similaridade de contexto
-		if (sit1.enemyCount === sit2.enemyCount) similarity += 1;
+		if (enemyCount1 === enemyCount2) similarity += 1;
 		factors++;
 		
-		if (sit1.roomType === sit2.roomType) similarity += 1;
+		if (roomType1 === roomType2) similarity += 1;
 		factors++;
 		
-		if (sit1.movementPattern === sit2.movementPattern) similarity += 0.5;
+		if (movementPattern1 === movementPattern2) similarity += 0.5;
 		factors++;
 		
-		return similarity / factors;
+		return factors > 0 ? similarity / factors : 0;
 	}
 	
 	compressWithSimilar(newEpisode, similarEpisode) {

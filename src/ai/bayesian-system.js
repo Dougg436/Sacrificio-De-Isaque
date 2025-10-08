@@ -603,6 +603,161 @@ class BayesianInferenceEngine {
 	getConfidence() {
 		return this.confidence;
 	}
+	
+	// Método para atualizar priors com novos dados de treinamento
+	updatePriors(features, outcome) {
+		try {
+			// Verificar se os parâmetros são válidos
+			if (!features || !Array.isArray(features) || !outcome) {
+				console.warn("🎲 Invalid parameters for updatePriors");
+				return;
+			}
+			
+			// Extrair informações da situação atual
+			const currentPosition = {
+				x: (features[0] || 0) * 800,
+				y: (features[1] || 0) * 600
+			};
+			
+			const currentVelocity = Math.sqrt(
+				((features[2] || 0) * 10)**2 + 
+				((features[3] || 0) * 10)**2
+			);
+			
+			const currentDirection = Math.atan2(
+				features[3] || 0, 
+				features[2] || 1
+			);
+			
+			// Atualizar prior de posição
+			this.updatePositionPrior(currentPosition, outcome);
+			
+			// Atualizar prior de velocidade
+			this.updateVelocityPrior(currentVelocity, outcome);
+			
+			// Atualizar prior de direção
+			this.updateDirectionPrior(currentDirection, outcome);
+			
+			// Atualizar confiança baseada no sucesso
+			if (outcome.success !== undefined) {
+				this.updateConfidenceFromOutcome(outcome.success);
+			}
+			
+			console.log(`🎲 Priors updated from training example`);
+			
+		} catch (error) {
+			console.warn("🎲 Error updating priors:", error.message);
+		}
+	}
+	
+	updatePositionPrior(position, outcome) {
+		// Atualizar distribuição prior de posição
+		const key = 'position';
+		
+		if (!this.priorDistributions.has(key)) {
+			this.priorDistributions.set(key, {
+				type: 'gaussian',
+				mean: { x: 400, y: 300 },
+				covariance: [[5000, 0], [0, 5000]],
+				sampleCount: 0,
+				successCount: 0
+			});
+		}
+		
+		const prior = this.priorDistributions.get(key);
+		prior.sampleCount++;
+		
+		if (outcome.success) {
+			prior.successCount++;
+			
+			// Atualizar média com learning rate adaptativo
+			const learningRate = 1 / Math.sqrt(prior.successCount + 1);
+			prior.mean.x += learningRate * (position.x - prior.mean.x);
+			prior.mean.y += learningRate * (position.y - prior.mean.y);
+			
+			// Reduzir variância com exemplos bem-sucedidos
+			const reduction = Math.min(0.1, learningRate);
+			prior.covariance[0][0] *= (1 - reduction);
+			prior.covariance[1][1] *= (1 - reduction);
+		}
+	}
+	
+	updateVelocityPrior(velocity, outcome) {
+		// Atualizar distribuição prior de velocidade
+		const key = 'velocity';
+		
+		if (!this.priorDistributions.has(key)) {
+			this.priorDistributions.set(key, {
+				type: 'gamma',
+				shape: 2.0,
+				rate: 0.4,
+				sampleCount: 0,
+				successCount: 0
+			});
+		}
+		
+		const prior = this.priorDistributions.get(key);
+		prior.sampleCount++;
+		
+		if (outcome.success && velocity > 0) {
+			prior.successCount++;
+			
+			// Atualização Bayesiana para Gamma
+			const learningRate = 1 / Math.sqrt(prior.successCount + 1);
+			const targetMean = velocity;
+			const currentMean = prior.shape / prior.rate;
+			
+			// Ajustar parâmetros em direção ao valor observado
+			if (targetMean > currentMean) {
+				prior.shape += learningRate * 0.1;
+			} else if (targetMean < currentMean) {
+				prior.rate += learningRate * 0.1;
+			}
+		}
+	}
+	
+	updateDirectionPrior(direction, outcome) {
+		// Atualizar distribuição prior de direção
+		const key = 'direction';
+		
+		if (!this.priorDistributions.has(key)) {
+			this.priorDistributions.set(key, {
+				type: 'von_mises',
+				mu: 0,
+				kappa: 1.0,
+				sampleCount: 0,
+				successCount: 0
+			});
+		}
+		
+		const prior = this.priorDistributions.get(key);
+		prior.sampleCount++;
+		
+		if (outcome.success) {
+			prior.successCount++;
+			
+			// Atualização para von Mises
+			const learningRate = 1 / Math.sqrt(prior.successCount + 1);
+			
+			// Atualizar média circular
+			const cosSum = Math.cos(prior.mu) + learningRate * Math.cos(direction);
+			const sinSum = Math.sin(prior.mu) + learningRate * Math.sin(direction);
+			prior.mu = Math.atan2(sinSum, cosSum);
+			
+			// Aumentar concentração com exemplos bem-sucedidos
+			prior.kappa += learningRate * 0.1;
+			prior.kappa = Math.min(prior.kappa, 10); // Limitar concentração máxima
+		}
+	}
+	
+	updateConfidenceFromOutcome(success) {
+		// Atualizar confiança geral baseada no resultado
+		if (success) {
+			this.confidence = Math.min(1.0, this.confidence + 0.01);
+		} else {
+			this.confidence = Math.max(0.1, this.confidence - 0.005);
+		}
+	}
 }
 
 // === SISTEMA DE QUANTIFICAÇÃO DE INCERTEZA ===

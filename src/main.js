@@ -5,8 +5,9 @@ import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, 
 import { keys, setupKeyboard, mouseX, mouseY, setupMouse, updateFrame, recordInputSnapshot, getRecentInputSequence, inputHistory } from './core/input.js';
 import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
-import { MIN_FIRE_RATE } from './config.js';
+import { MIN_FIRE_RATE, ENEMY_SPAWN_DELAY } from './config.js';
 import { UltraPrecisionEnsembleAI } from './ai/ultra-precision-ensemble.js';
+import { NeuralNetworkVisualizer } from './utils/neural-visualizer.js';
 
 const canvas = document.getElementById('gameScreen');
 const ctx = canvas.getContext('2d');
@@ -14,6 +15,15 @@ const ctx = canvas.getContext('2d');
 // === A IA MAIS ABSURDA DO MUNDO ===
 console.log('🚀 INICIALIZANDO SISTEMA DE IA ULTRA PRECISO...');
 const ultraAI = new UltraPrecisionEnsembleAI();
+
+// === VISUALIZADOR NEURAL ===
+console.log('🎨 INICIALIZANDO VISUALIZADOR NEURAL...');
+const neuralViz = new NeuralNetworkVisualizer({
+    width: 280,
+    height: 280,
+    position: 'top-right'
+});
+
 let aiPredictions = [];
 let lastAIUpdateTime = 0;
 let aiStats = { predictions: 0, accuracy: 0, ultraPrecisionMode: true };
@@ -23,6 +33,11 @@ let AI_ENABLED = true; // SEMPRE ATIVO - performance não importa
 let AI_UPDATE_INTERVAL = 100; // REDUZIDO: Atualizar IA a cada 100ms para máxima precisão
 let AI_TRAINING_INTERVAL = 500; // REDUZIDO: Treinar a cada 500ms para aprendizado contínuo
 let lastAITrainingTime = 0;
+
+// === SISTEMA DE INIMIGO ALVO (para visualização da IA) ===
+let targetEnemy = null; // Inimigo sendo rastreado pelo visualizador neural
+let targetEnemyRotationTime = 0; // Última vez que mudou de alvo
+const TARGET_ENEMY_ROTATION_INTERVAL = 5000; // Mudar de alvo a cada 5 segundos
 
 // Buffer para coleta de dados de treinamento (AUMENTADO PARA MÁXIMA PRECISÃO)
 let trainingBuffer = [];
@@ -125,7 +140,8 @@ async function updateUltraPreciseAIPredictions() {
 		y: player.y,
 		vx: player.velocityX || 0,
 		vy: player.velocityY || 0,
-		averageSpeed: player.averageSpeed || 3,
+		speed: player.speed || 3,  // VELOCIDADE ATUAL DO JOGADOR (pode mudar com upgrades!)
+		averageSpeed: player.averageSpeed || player.speed || 3,
 		directionChanges: player.directionChanges || 0,
 		patternConfidence: player.patternConfidence || 0.5,
 		health: player.health,
@@ -174,6 +190,14 @@ async function updateUltraPreciseAIPredictions() {
 			const activeSystems = aiPredictions[0]?.metadata?.activeSystems || 0;
 			
 			console.log(`🧠 IA ULTRA PRECISA - Predições: ${aiPredictions.length}, Confiança média: ${(avgConfidence * 100).toFixed(1)}%, Sistemas ativos: ${activeSystems}`);
+			
+			// === ATUALIZAR VISUALIZADOR NEURAL ===
+			try {
+				const neuralData = ultraAI.exportNeuralVisualizationData();
+				neuralViz.updateOverlay(neuralData, avgConfidence);
+			} catch (vizError) {
+				console.warn('⚠️ Erro ao atualizar visualizador neural:', vizError);
+			}
 		}
 		
 	} catch (error) {
@@ -308,49 +332,137 @@ function getBestUltraPreciseAIPrediction(enemy, bulletSpeed) {
 	};
 }
 
-// Função para desenhar visualização da IA (opcional, para debug)
-function drawAIVisualization() {
+// Função para desenhar visualização da IA ULTRA PRECISA
+function drawUltraPreciseAIVisualization() {
 	if (!keys['i']) return; // Apenas mostrar se tecla I estiver pressionada
 	
-	// Desenhar predições da IA
-	aiPredictions.forEach(prediction => {
-		const alpha = Math.max(0.1, prediction.confidence);
-		const timeRatio = prediction.timeHorizon / 1.5; // Normalizar para 1.5s max
+	// Desenhar predições da IA com cores ultra detalhadas
+	aiPredictions.forEach((prediction, index) => {
+		const alpha = Math.max(0.2, prediction.confidence);
+		const timeRatio = prediction.timeHorizon / 1.0; // Normalizar para 1s max
 		
-		// Cor baseada no tempo de predição
-		ctx.fillStyle = `rgba(${255 * timeRatio}, ${255 * (1 - timeRatio)}, 0, ${alpha})`;
+		// Cores baseadas na confiança e sistemas ativos
+		let red = 255;
+		let green = 0;
+		let blue = 0;
+		
+		if (prediction.confidence > 0.9) {
+			// Verde para alta confiança (90%+)
+			red = 0; green = 255; blue = 0;
+		} else if (prediction.confidence > 0.8) {
+			// Amarelo para boa confiança (80-90%)
+			red = 255; green = 255; blue = 0;
+		} else if (prediction.confidence > 0.7) {
+			// Laranja para confiança média (70-80%)
+			red = 255; green = 165; blue = 0;
+		}
+		
+		// Círculo da predição com tamanho baseado na confiança
+		const radius = 5 + (prediction.confidence * 15); // 5-20px baseado na confiança
+		ctx.fillStyle = `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 		ctx.beginPath();
-		ctx.arc(prediction.position.x, prediction.position.y, 8, 0, Math.PI * 2);
+		ctx.arc(prediction.position.x, prediction.position.y, radius, 0, Math.PI * 2);
 		ctx.fill();
 		
+		// Borda mais espessa para predições ensemble
+		if (prediction.ensembleSize > 1) {
+			ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+			ctx.lineWidth = 3;
+			ctx.stroke();
+		}
+		
 		// Linha da posição atual para predição
-		ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.5})`;
-		ctx.lineWidth = 1;
+		ctx.strokeStyle = `rgba(${red}, ${green}, ${blue}, ${alpha * 0.6})`;
+		ctx.lineWidth = 2;
 		ctx.beginPath();
 		ctx.moveTo(player.x + player.size/2, player.y + player.size/2);
 		ctx.lineTo(prediction.position.x, prediction.position.y);
 		ctx.stroke();
+		
+		// Texto de informação detalhada
+		if (prediction.confidence > 0.8) {
+			ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+			ctx.font = '10px Arial';
+			ctx.textAlign = 'center';
+			ctx.fillText(
+				`${(prediction.confidence * 100).toFixed(0)}%`, 
+				prediction.position.x, 
+				prediction.position.y - radius - 5
+			);
+			
+			// Mostrar tempo de horizonte
+			ctx.fillText(
+				`${(prediction.timeHorizon * 1000).toFixed(0)}ms`, 
+				prediction.position.x, 
+				prediction.position.y + radius + 15
+			);
+		}
 	});
 	
-	// Mostrar estatísticas da IA
-	ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-	ctx.fillRect(10, 200, 250, 120);
+	// Painel de estatísticas da IA ULTRA DETALHADO
+	const panelWidth = 350;
+	const panelHeight = 280;
+	ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+	ctx.fillRect(10, 200, panelWidth, panelHeight);
 	
 	ctx.fillStyle = '#fff';
-	ctx.font = '14px Arial';
+	ctx.font = 'bold 16px Arial';
 	ctx.textAlign = 'left';
+	ctx.fillText('IA ULTRA PRECISA - ESTATÍSTICAS', 15, 220);
 	
-	const stats = advancedAI.getStats();
-	ctx.fillText(`AI Predictions: ${stats.totalPredictions}`, 15, 220);
-	ctx.fillText(`Accuracy: ${(stats.predictionAccuracy * 100).toFixed(1)}%`, 15, 240);
-	ctx.fillText(`Pattern Accuracy: ${(stats.patternAccuracy * 100).toFixed(1)}%`, 15, 260);
-	ctx.fillText(`Training Data: ${stats.knnDataPoints}`, 15, 280);
-	ctx.fillText(`Neural Epochs: ${stats.trainingEpochs}`, 15, 300);
+	ctx.font = '14px Arial';
+	let yOffset = 240;
+	
+	// Estatísticas principais
+	const detailedStats = ultraAI.getDetailedStats();
+	ctx.fillText(`Total de Predições: ${detailedStats.totalPredictions}`, 15, yOffset);
+	yOffset += 18;
+	
+	ctx.fillStyle = detailedStats.accuracy > 0.9 ? '#0f0' : detailedStats.accuracy > 0.8 ? '#ff0' : '#f80';
+	ctx.fillText(`Precisão: ${(detailedStats.accuracy * 100).toFixed(2)}%`, 15, yOffset);
+	yOffset += 18;
+	
+	ctx.fillStyle = '#fff';
+	ctx.fillText(`Predições Ativas: ${aiPredictions.length}`, 15, yOffset);
+	yOffset += 18;
+	
+	ctx.fillText(`Validações Pendentes: ${aiValidationBuffer.length}`, 15, yOffset);
+	yOffset += 18;
+	
+	// Estatísticas de memória
+	if (detailedStats.memoryUsage) {
+		ctx.fillText(`KNN Data Points: ${detailedStats.memoryUsage.knnDataPoints}`, 15, yOffset);
+		yOffset += 18;
+		
+		ctx.fillText(`Redes Neurais: ${detailedStats.memoryUsage.neuralNetworkSize}`, 15, yOffset);
+		yOffset += 18;
+	}
+	
+	// Performance
+	if (detailedStats.performance && detailedStats.performance.averageProcessingTime > 0) {
+		ctx.fillText(`Tempo Médio: ${detailedStats.performance.averageProcessingTime.toFixed(1)}ms`, 15, yOffset);
+		yOffset += 18;
+	}
+	
+	// Pesos dos sistemas (apenas os principais)
+	ctx.font = '12px Arial';
+	ctx.fillStyle = '#aaa';
+	ctx.fillText('Pesos dos Sistemas:', 15, yOffset);
+	yOffset += 15;
+	
+	const mainWeights = ['ultraDeep', 'lstm', 'conv', 'attention', 'transformer'];
+	mainWeights.forEach(system => {
+		if (detailedStats.predictionWeights[system]) {
+			ctx.fillText(`${system}: ${(detailedStats.predictionWeights[system] * 100).toFixed(1)}%`, 20, yOffset);
+			yOffset += 12;
+		}
+	});
 	
 	// Mostrar padrão atual
 	if (player.movementPattern && player.patternConfidence > 0.3) {
 		ctx.fillStyle = player.patternConfidence > 0.7 ? '#0f0' : '#ff0';
-		ctx.fillText(`Pattern: ${player.movementPattern} (${(player.patternConfidence * 100).toFixed(0)}%)`, 15, 320);
+		ctx.font = '14px Arial';
+		ctx.fillText(`Padrão: ${player.movementPattern.toUpperCase()} (${(player.patternConfidence * 100).toFixed(0)}%)`, 15, yOffset + 10);
 	}
 }
 
@@ -1241,17 +1353,28 @@ function goToNextFloor() {
 	spawnRoomEnemies();
 }
 
-function update() {
+async function update() {
 	// Atualizar frame counter para sistema de input
 	updateFrame();
 	
-	// Coletar dados para treinamento da IA
-	collectAITrainingData();
+	// Coletar dados para treinamento da IA ULTRA PRECISA
+	await collectAITrainingData();
 	
 	// Calcular deltaTime
 	const currentTime = Date.now();
 	deltaTime = (currentTime - lastFrameTime) / 1000; // Converter para segundos
 	lastFrameTime = currentTime;
+	
+	// Selecionar inimigo alvo para visualização (rotaciona a cada 5 segundos)
+	if (enemies.length > 0) {
+		if (!targetEnemy || !enemies.includes(targetEnemy) || (Date.now() - targetEnemyRotationTime) > TARGET_ENEMY_ROTATION_INTERVAL) {
+			// Escolher inimigo aleatório
+			targetEnemy = enemies[Math.floor(Math.random() * enemies.length)];
+			targetEnemyRotationTime = Date.now();
+		}
+	} else {
+		targetEnemy = null;
+	}
 	
 	// Limitar deltaTime para evitar saltos grandes (ex: quando tab fica inativa)
 	if (deltaTime > 0.1) deltaTime = 0.1;
@@ -1390,64 +1513,111 @@ function update() {
 		}
 		
 		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
+		
+		// Desenhar aura roxa ao redor do inimigo rastreado pela IA
+		if (enemy === targetEnemy) {
+			ctx.save();
+			ctx.strokeStyle = '#9d4edd'; // Roxo vibrante
+			ctx.shadowBlur = 20;
+			ctx.shadowColor = '#9d4edd';
+			ctx.lineWidth = 3;
+			
+			// Desenhar círculo pulsante ao redor do inimigo
+			const pulse = Math.sin(Date.now() / 300) * 5 + 35; // Pulsa entre 30 e 40 pixels
+			ctx.beginPath();
+			ctx.arc(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2, pulse, 0, Math.PI * 2);
+			ctx.stroke();
+			
+			// Desenhar linha para a predição da IA (se disponível)
+			const ultraPrediction = getBestUltraPreciseAIPrediction(enemy, 10);
+			if (ultraPrediction && ultraPrediction.predictedPosition) {
+				ctx.strokeStyle = '#c77dff'; // Roxo mais claro para a linha
+				ctx.lineWidth = 2;
+				ctx.setLineDash([5, 5]); // Linha tracejada
+				ctx.beginPath();
+				ctx.moveTo(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2);
+				ctx.lineTo(ultraPrediction.predictedPosition.x, ultraPrediction.predictedPosition.y);
+				ctx.stroke();
+				ctx.setLineDash([]); // Resetar linha tracejada
+				
+				// Desenhar círculo na posição prevista
+				ctx.fillStyle = 'rgba(199, 125, 255, 0.3)'; // Roxo translúcido
+				ctx.beginPath();
+				ctx.arc(ultraPrediction.predictedPosition.x, ultraPrediction.predictedPosition.y, 8, 0, Math.PI * 2);
+				ctx.fill();
+			}
+			
+			ctx.restore();
+		}
+		
 		drawEnemy(ctx, enemy);
 		
-		// Inimigo atira no player com IA EXTREMAMENTE INSANA
-		if (updateResult && updateResult.shouldShoot) {
-			const bulletSpeed = 8; // AUMENTADO de 6 para 8 - projéteis mais rápidos
-			
-			// === USAR IA AVANÇADA PARA MIRA SUPREMA ===
-			let angle;
-			let aimMethod = 'advanced'; // Método de mira utilizado
-			
-			// Tentar usar predição da IA neural primeiro
-			const aiPrediction = getBestAIPrediction(enemy, bulletSpeed);
-			
-			if (aiPrediction && aiPrediction.confidence > 0.7) {
-				// IA NEURAL - Mira na predição da rede neural
-				angle = Math.atan2(
-					aiPrediction.position.y - (enemy.y + enemy.size/2),
-					aiPrediction.position.x - (enemy.x + enemy.size/2)
-				);
-				aimMethod = 'neural_ai';
-			} else {
-				// Fallback para sistema avançado existente
-				angle = calculateAdvancedPredictiveAngle(
-					enemy.x + enemy.size/2,  // posição X do inimigo
-					enemy.y + enemy.size/2,  // posição Y do inimigo
-					player,                   // objeto completo do player com histórico
-					bulletSpeed,              // velocidade do projétil
-					updateResult.aimAccuracy  // precisão do inimigo (98-99%)
-				);
-				aimMethod = 'advanced';
-			}
-			
-			// === APLICAR MODO DIFICULDADE INSANA ===
-			const insanityMode = true; // SEMPRE ATIVO
-			if (insanityMode) {
-				// Ajuste final para AIMBOT LITERALMENTE INSANO
-				const finalAccuracy = Math.min(updateResult.aimAccuracy * 1.1, 0.999); // Até 99.9%
+			// Inimigo atira no player com IA ULTRA EXTREMAMENTE INSANA
+			if (updateResult && updateResult.shouldShoot) {
+				const bulletSpeed = 10; // AUMENTADO de 8 para 10 - projéteis ULTRA rápidos
 				
-				// Adicionar pequena perturbação baseada na "dificuldade"
-
+				// === USAR IA ULTRA PRECISA PARA MIRA ABSURDAMENTE SUPREMA ===
+				let angle;
+				let aimMethod = 'ultra_precise'; // Método de mira utilizado
+				let aiConfidence = 0;
+				
+				// Tentar usar predição da IA ULTRA PRECISA primeiro
+				const ultraPrediction = getBestUltraPreciseAIPrediction(enemy, bulletSpeed);
+				
+				if (ultraPrediction && ultraPrediction.confidence > 0.75) {
+					// IA ULTRA PRECISA - Mira na predição do ensemble neural
+					angle = Math.atan2(
+						ultraPrediction.position.y - (enemy.y + enemy.size/2),
+						ultraPrediction.position.x - (enemy.x + enemy.size/2)
+					);
+					aimMethod = ultraPrediction.isEnsemble ? 'ultra_ensemble' : 'ultra_neural';
+					aiConfidence = ultraPrediction.confidence;
+					
+					// Log de alta precisão
+					if (ultraPrediction.confidence > 0.95) {
+						console.log(`🎯 ULTRA PRECISÃO: ${(ultraPrediction.confidence * 100).toFixed(1)}% confiança, ensemble: ${ultraPrediction.ensembleSize || 1} sistemas`);
+					}
+				} else {
+					// Fallback para sistema avançado existente
+					angle = calculateAdvancedPredictiveAngle(
+						enemy.x + enemy.size/2,  // posição X do inimigo
+						enemy.y + enemy.size/2,  // posição Y do inimigo
+						player,                   // objeto completo do player com histórico
+						bulletSpeed,              // velocidade do projétil
+						updateResult.aimAccuracy  // precisão do inimigo (98-99%)
+					);
+					aimMethod = 'advanced_fallback';
+					aiConfidence = updateResult.aimAccuracy;
+				}
+				
+				// === APLICAR MODO ULTRA INSANIDADE ===
+				const ultraInsanityMode = true; // SEMPRE ATIVO
+				if (ultraInsanityMode && aiConfidence > 0.8) {
+					// Ajuste final para AIMBOT LITERALMENTE ULTRA INSANO
+					const finalAccuracy = Math.min(aiConfidence * 1.2, 0.9999); // Até 99.99%
+					
+					// Micro-ajuste baseado na confiança da IA
+					const microAdjustment = (Math.random() - 0.5) * (1 - finalAccuracy) * 0.1;
+					angle += microAdjustment;
+				}
+				
+				const bullet = createBullet(
+					enemy.x + enemy.size/2,
+					enemy.y + enemy.size/2,
+					angle,
+					bulletSpeed, // velocidade ULTRA AUMENTADA
+					18, // tamanho menor para tiros ultra rápidos
+					enemy.damage,
+					true // marcar como tiro de inimigo
+				);
+				
+				// Marcar método de mira no projétil (para debug e visualização)
+				bullet.aimMethod = aimMethod;
+				bullet.aiConfidence = aiConfidence;
+				bullet.ultraPrecision = aiConfidence > 0.9;
+				
+				bullets.push(bullet);
 			}
-			
-			const bullet = createBullet(
-				enemy.x + enemy.size/2,
-				enemy.y + enemy.size/2,
-				angle,
-				bulletSpeed, // velocidade AUMENTADA
-				20, // tamanho menor para tiros de inimigos
-				enemy.damage,
-				true // marcar como tiro de inimigo
-			);
-			
-			// Marcar método de mira no projétil (para debug)
-			bullet.aimMethod = aimMethod;
-			bullet.aiConfidence = aiPrediction ? aiPrediction.confidence : 0;
-			
-			bullets.push(bullet);
-		}
 		
 		// Verificar colisão com player
 		if (checkEnemyCollision(enemy, player)) {
@@ -1480,18 +1650,42 @@ function update() {
 		b.x += b.vx;
 		b.y += b.vy;
 		
-		// Cor diferente para tiros de inimigos
+		// Cor diferente para tiros de inimigos com ULTRA PRECISÃO
 		if (b.isEnemy) {
-			// Desenhar tiro de inimigo com indicação de IA
+			// Desenhar tiro de inimigo com indicação de IA ULTRA PRECISA
 			let bulletColor = '#ff4444';
 			let borderColor = '#880000';
+			let glowColor = null;
 			
-			// Cores especiais baseadas no método de mira
-			if (b.aimMethod === 'neural_ai') {
-				bulletColor = '#ff0080'; // Rosa/magenta para IA neural
+			// Cores especiais baseadas no método de mira ULTRA AVANÇADO
+			if (b.aimMethod === 'ultra_ensemble') {
+				bulletColor = '#ff0080'; // Rosa/magenta para ensemble ultra preciso
 				borderColor = '#880040';
+				glowColor = '#ff80c0'; // Brilho rosa
+			} else if (b.aimMethod === 'ultra_neural') {
+				bulletColor = '#8000ff'; // Roxo para IA neural ultra precisa
+				borderColor = '#400080';
+				glowColor = '#c080ff'; // Brilho roxo
+			} else if (b.aimMethod === 'ultra_precise') {
+				bulletColor = '#00ff80'; // Verde-azul para ultra precisão
+				borderColor = '#008040';
+				glowColor = '#80ffc0'; // Brilho verde-azul
 			}
 			
+			// Efeito de brilho para tiros ultra precisos
+			if (b.ultraPrecision && glowColor) {
+				const glowRadius = b.size * 0.8;
+				const gradient = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, glowRadius);
+				gradient.addColorStop(0, glowColor + '80'); // 50% transparência
+				gradient.addColorStop(1, glowColor + '00'); // Transparente
+				
+				ctx.fillStyle = gradient;
+				ctx.beginPath();
+				ctx.arc(b.x, b.y, glowRadius, 0, Math.PI * 2);
+				ctx.fill();
+			}
+			
+			// Desenhar projétil principal
 			ctx.fillStyle = bulletColor;
 			ctx.beginPath();
 			ctx.arc(b.x, b.y, b.size/2, 0, Math.PI * 2);
@@ -1500,12 +1694,21 @@ function update() {
 			ctx.lineWidth = 2;
 			ctx.stroke();
 			
-			// Mostrar indicador de confiança da IA (para debug)
+			// Indicador de confiança da IA (núcleo brilhante)
 			if (keys['i'] && b.aiConfidence > 0) {
-				ctx.fillStyle = `rgba(255, 255, 255, ${b.aiConfidence})`;
+				const coreAlpha = Math.pow(b.aiConfidence, 2); // Quadrático para destacar alta confiança
+				ctx.fillStyle = `rgba(255, 255, 255, ${coreAlpha})`;
 				ctx.beginPath();
 				ctx.arc(b.x, b.y, b.size/4, 0, Math.PI * 2);
 				ctx.fill();
+				
+				// Texto de confiança para tiros ultra precisos
+				if (b.aiConfidence > 0.9) {
+					ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+					ctx.font = '8px Arial';
+					ctx.textAlign = 'center';
+					ctx.fillText(`${(b.aiConfidence * 100).toFixed(0)}%`, b.x, b.y - b.size);
+				}
 			}
 			
 			// Verificar colisão com player
@@ -1595,12 +1798,13 @@ function update() {
 		}
 	}
 	
-	// Debug info para IA
+	// Debug info para IA ULTRA PRECISA
 	if (keys['i']) {
-		ctx.fillStyle = "yellow";
-		ctx.font = "14px Arial";
-		ctx.fillText("AI DEBUG MODE (hold I)", 10, roomHeight - 40);
-		ctx.fillText(`Neural predictions: ${aiPredictions.length}`, 10, roomHeight - 20);
+		ctx.fillStyle = "lime";
+		ctx.font = "16px Arial";
+		ctx.fillText("IA ULTRA PRECISA DEBUG MODE (hold I)", 10, roomHeight - 60);
+		ctx.fillText(`Predições ativas: ${aiPredictions.length} | Validações: ${aiValidationBuffer.length}`, 10, roomHeight - 40);
+		ctx.fillText(`Precisão atual: ${(aiStats.accuracy * 100).toFixed(2)}% (${aiStats.predictions} predições)`, 10, roomHeight - 20);
 	}
 	
 	// Debug info
@@ -1612,14 +1816,22 @@ function update() {
 	
 	drawPlayer(ctx, mouseX, mouseY);
 	
-	// Desenhar visualização da IA (se ativada)
-	drawAIVisualization();
+	// Desenhar visualização da IA ULTRA PRECISA (se ativada)
+	drawUltraPreciseAIVisualization();
 	
 	// Desenhar minimapa por último (para ficar por cima)
 	drawMinimap();
 	
 	requestAnimationFrame(update);
 }
+
+// === CONTROLE DO VISUALIZADOR NEURAL ===
+document.addEventListener('keydown', (e) => {
+	// Pressione 'V' para mostrar/ocultar visualizador neural
+	if (e.key === 'v' || e.key === 'V') {
+		neuralViz.toggle();
+	}
+});
 
 canvas.addEventListener('mousedown', e => {
 	// Verificar se pode atirar (fire rate)

@@ -1,7 +1,4 @@
-Uncaught TypeError: Cannot read properties of undefined (reading 'length')
-    at new UltraDeepNeuralNetwork (neural-network-ultra.js:58:36)
-    at new UltraPrecisionEnsembleAI (ultra-precision-ensemble.js:28:24)
-    at main.js:16:17// ============================================================================
+// ============================================================================
 // SISTEMA DE IA MAIS ABSURDO DO MUNDO - 100% PRECISÃO TARGET
 // Implementação Ultra Avançada com Ensemble de Múltiplas Arquiteturas
 // ============================================================================
@@ -102,7 +99,7 @@ class UltraDeepNeuralNetwork {
 	
 	async predict(input) {
 		let activation = [...input];
-		this.activations = [activation];
+		this.activations = [[...activation]];
 		
 		// Forward pass através de todas as camadas
 		for (let i = 0; i < this.layers.length; i++) {
@@ -144,6 +141,13 @@ class UltraDeepNeuralNetwork {
 		
 		return activation;
 	}
+
+	getLayerActivations() {
+		if (!this.activations || this.activations.length === 0) {
+			return [];
+		}
+		return this.activations.map(layer => Array.isArray(layer) ? [...layer] : []);
+	}
 	
 	calculateConfidence(output) {
 		const variance = output.reduce((sum, val, i, arr) => {
@@ -152,6 +156,50 @@ class UltraDeepNeuralNetwork {
 		}, 0) / output.length;
 		
 		return Math.max(0, Math.min(1, 1 - Math.sqrt(variance) / 10));
+	}
+	
+	// Método de treinamento básico
+	train(inputs, targets) {
+		try {
+			if (!inputs || !targets || inputs.length === 0 || targets.length === 0) {
+				return;
+			}
+			
+			// Treinamento simples por amostra
+			for (let sample = 0; sample < inputs.length; sample++) {
+				const input = inputs[sample];
+				const target = targets[sample];
+				
+				if (!input || !target) continue;
+				
+				// Forward pass
+				const prediction = this.predict(input);
+				
+				// Calcular erro simples
+				const error = [];
+				for (let i = 0; i < Math.min(prediction.length, target.length); i++) {
+					error[i] = target[i] - prediction[i];
+				}
+				
+				// Backpropagation simplificado - apenas ajustar última camada
+				const lastLayer = this.layers[this.layers.length - 1];
+				const learningRate = 0.001;
+				
+				for (let i = 0; i < lastLayer.weights.length && i < error.length; i++) {
+					for (let j = 0; j < lastLayer.weights[i].length; j++) {
+						if (this.activations[this.activations.length - 2] && 
+							this.activations[this.activations.length - 2][j] !== undefined) {
+							lastLayer.weights[i][j] += learningRate * error[i] * this.activations[this.activations.length - 2][j];
+						}
+					}
+					lastLayer.biases[i] += learningRate * error[i];
+				}
+			}
+			
+			this.trainingEpochs = (this.trainingEpochs || 0) + 1;
+		} catch (error) {
+			console.warn('Erro durante treinamento da rede neural:', error.message);
+		}
 	}
 	
 	getConfidence() { return this.confidence; }
@@ -231,6 +279,47 @@ class LSTMLikeNetwork {
 		const hiddenStability = 1 - (this.hiddenState.reduce((sum, val) => sum + Math.abs(val), 0) / this.hiddenSize / 10);
 		const cellStability = 1 - (this.cellState.reduce((sum, val) => sum + Math.abs(val), 0) / this.hiddenSize / 10);
 		return Math.max(0, Math.min(1, (hiddenStability + cellStability) / 2));
+	}
+	
+	// Método de treinamento para LSTM
+	train(inputs, targets) {
+		try {
+			if (!inputs || !targets || inputs.length === 0 || targets.length === 0) {
+				return;
+			}
+			
+			// Treinamento simples para LSTM
+			for (let sample = 0; sample < inputs.length; sample++) {
+				const input = inputs[sample];
+				const target = targets[sample];
+				
+				if (!input || !target) continue;
+				
+				// Forward pass
+				const prediction = this.predict(input);
+				
+				// Calcular erro
+				const error = [];
+				for (let i = 0; i < Math.min(prediction.length, target.length); i++) {
+					error[i] = target[i] - prediction[i];
+				}
+				
+				// Ajuste simples da camada final
+				const learningRate = 0.0005; // Menor para LSTM
+				for (let i = 0; i < this.finalLayer.weights.length && i < error.length; i++) {
+					for (let j = 0; j < this.finalLayer.weights[i].length; j++) {
+						if (this.hiddenState[j] !== undefined) {
+							this.finalLayer.weights[i][j] += learningRate * error[i] * this.hiddenState[j];
+						}
+					}
+					this.finalLayer.biases[i] += learningRate * error[i];
+				}
+			}
+			
+			this.trainingEpochs = (this.trainingEpochs || 0) + 1;
+		} catch (error) {
+			console.warn('Erro durante treinamento LSTM:', error.message);
+		}
 	}
 	
 	getConfidence() { return this.confidence; }
@@ -333,6 +422,49 @@ class ConvolutionalPatternNetwork {
 		return input.map(channel => [channel.reduce((a, b) => a + b, 0) / channel.length]);
 	}
 	
+	// Método de treinamento para rede convolucional
+	train(inputs, targets) {
+		try {
+			if (!inputs || !targets || inputs.length === 0 || targets.length === 0) {
+				return;
+			}
+			
+			// Treinamento básico para CNN
+			for (let sample = 0; sample < inputs.length; sample++) {
+				const input = inputs[sample];
+				const target = targets[sample];
+				
+				if (!input || !target) continue;
+				
+				// Forward pass
+				const prediction = this.predict(input);
+				
+				// Calcular erro
+				const error = [];
+				for (let i = 0; i < Math.min(prediction.length, target.length); i++) {
+					error[i] = target[i] - prediction[i];
+				}
+				
+				// Ajuste básico da camada de classificação
+				const learningRate = 0.0008;
+				if (this.classifier && this.classifier.weights) {
+					for (let i = 0; i < this.classifier.weights.length && i < error.length; i++) {
+						for (let j = 0; j < this.classifier.weights[i].length; j++) {
+							// Usar ativações da camada anterior se disponível
+							const activation = this.lastActivations ? (this.lastActivations[j] || 0) : 1;
+							this.classifier.weights[i][j] += learningRate * error[i] * activation;
+						}
+						this.classifier.biases[i] += learningRate * error[i];
+					}
+				}
+			}
+			
+			this.trainingEpochs = (this.trainingEpochs || 0) + 1;
+		} catch (error) {
+			console.warn('Erro durante treinamento CNN:', error.message);
+		}
+	}
+	
 	getConfidence() { return this.confidence; }
 }
 
@@ -415,6 +547,47 @@ class AttentionMechanismNetwork {
 		return Math.max(0, Math.min(1, maxWeight - entropy / 10));
 	}
 	
+	// Método de treinamento para mecanismo de atenção
+	train(inputs, targets) {
+		try {
+			if (!inputs || !targets || inputs.length === 0 || targets.length === 0) {
+				return;
+			}
+			
+			// Treinamento básico para Attention
+			for (let sample = 0; sample < inputs.length; sample++) {
+				const input = inputs[sample];
+				const target = targets[sample];
+				
+				if (!input || !target) continue;
+				
+				// Forward pass
+				const prediction = this.predict(input);
+				
+				// Calcular erro
+				const error = [];
+				for (let i = 0; i < Math.min(prediction.length, target.length); i++) {
+					error[i] = target[i] - prediction[i];
+				}
+				
+				// Ajuste da camada de saída
+				const learningRate = 0.0005;
+				for (let i = 0; i < this.outputLayer.weights.length && i < error.length; i++) {
+					for (let j = 0; j < this.outputLayer.weights[i].length; j++) {
+						// Usar últimas ativações de atenção se disponível
+						const activation = this.lastAttentionOutput ? (this.lastAttentionOutput[j] || 0) : 1;
+						this.outputLayer.weights[i][j] += learningRate * error[i] * activation;
+					}
+					this.outputLayer.biases[i] += learningRate * error[i];
+				}
+			}
+			
+			this.trainingEpochs = (this.trainingEpochs || 0) + 1;
+		} catch (error) {
+			console.warn('Erro durante treinamento Attention:', error.message);
+		}
+	}
+	
 	getConfidence() { return this.confidence; }
 }
 
@@ -487,6 +660,48 @@ class TransformerLikeNetwork {
 			result[i] = sum;
 		}
 		return result;
+	}
+	
+	// Método de treinamento para Transformer
+	train(inputs, targets) {
+		try {
+			if (!inputs || !targets || inputs.length === 0 || targets.length === 0) {
+				return;
+			}
+			
+			// Treinamento básico para Transformer
+			for (let sample = 0; sample < inputs.length; sample++) {
+				const input = inputs[sample];
+				const target = targets[sample];
+				
+				if (!input || !target) continue;
+				
+				// Forward pass
+				const prediction = this.predict(input);
+				
+				// Calcular erro
+				const error = [];
+				for (let i = 0; i < Math.min(prediction.length, target.length); i++) {
+					error[i] = target[i] - prediction[i];
+				}
+				
+				// Ajuste da camada feed-forward final
+				const learningRate = 0.0003; // Menor para Transformer
+				const finalLayer = this.feedForward[this.feedForward.length - 1];
+				for (let i = 0; i < finalLayer.weights.length && i < error.length; i++) {
+					for (let j = 0; j < finalLayer.weights[i].length; j++) {
+						// Usar últimas ativações se disponível
+						const activation = this.lastFeedForwardOutput ? (this.lastFeedForwardOutput[j] || 0) : 1;
+						finalLayer.weights[i][j] += learningRate * error[i] * activation;
+					}
+					finalLayer.biases[i] += learningRate * error[i];
+				}
+			}
+			
+			this.trainingEpochs = (this.trainingEpochs || 0) + 1;
+		} catch (error) {
+			console.warn('Erro durante treinamento Transformer:', error.message);
+		}
 	}
 	
 	getConfidence() { return this.confidence; }

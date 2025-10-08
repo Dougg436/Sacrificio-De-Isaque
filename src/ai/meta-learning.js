@@ -207,6 +207,31 @@ class MetaLearningOptimizer {
 		
 		this.normalizeWeights();
 	}
+	
+	// Adaptar estratégia de aprendizado baseado na performance
+	adaptLearningStrategy(currentPerformance) {
+		// Se a performance está caindo, aumentar exploração
+		if (currentPerformance < 0.5) {
+			console.log('📉 Performance baixa - Aumentando exploração');
+			this.learningRates.forEach((lr, net) => {
+				this.learningRates.set(net, lr * 1.2);
+			});
+		}
+		// Se a performance está alta, aumentar exploitation
+		else if (currentPerformance > 0.8) {
+			console.log('📈 Performance alta - Refinando aprendizado');
+			this.learningRates.forEach((lr, net) => {
+				this.learningRates.set(net, lr * 0.9);
+			});
+		}
+		
+		this.adaptationCount++;
+		return {
+			strategy: currentPerformance < 0.5 ? 'exploration' : 'exploitation',
+			learningRates: Object.fromEntries(this.learningRates),
+			adaptationCount: this.adaptationCount
+		};
+	}
 }
 
 // === OTIMIZAÇÃO GENÉTICA DE HIPERPARÂMETROS ===
@@ -383,6 +408,164 @@ class GeneticHyperparameterOptimizer {
 		
 		return diversity / genes.length;
 	}
+	
+	// Método para evolução de hiperparâmetros baseado em redes neurais e estatísticas
+	async evolveHyperparameters(neuralNetworks, stats) {
+		try {
+			// Verificar se temos dados suficientes para evolução
+			if (!stats || stats.totalPredictions < 50) {
+				console.log("🧬 Insufficient data for hyperparameter evolution");
+				return;
+			}
+			
+			// Calcular fitness baseado na performance das redes
+			const fitnessScores = this.calculateNetworkFitness(neuralNetworks, stats);
+			
+			// Executar evolução genética
+			this.evolve(fitnessScores);
+			
+			// Aplicar melhores hiperparâmetros às redes
+			const bestParams = this.getBestHyperparameters();
+			this.applyHyperparametersToNetworks(neuralNetworks, bestParams);
+			
+			console.log(`🧬 Hyperparameters evolved - Generation ${this.generation}, Best Fitness: ${this.bestGenome?.fitness.toFixed(4) || 'N/A'}`);
+			
+		} catch (error) {
+			console.warn("🧬 Error during hyperparameter evolution:", error.message);
+		}
+	}
+	
+	calculateNetworkFitness(neuralNetworks, stats) {
+		// Calcular fitness para cada membro da população baseado na performance
+		return this.population.map((genome, index) => {
+			let fitness = 0.5; // Base fitness
+			
+			// Fitness baseado na precisão
+			if (stats.accuracy !== undefined) {
+				fitness += stats.accuracy * 0.4;
+			}
+			
+			// Fitness baseado na eficiência (predições por segundo)
+			if (stats.totalPredictions > 0 && stats.processingTime) {
+				const efficiency = stats.totalPredictions / (stats.processingTime / 1000);
+				fitness += Math.min(0.2, efficiency / 1000); // Normalizar eficiência
+			}
+			
+			// Fitness baseado na estabilidade (menor variância de erro)
+			if (stats.errorHistory && stats.errorHistory.length > 10) {
+				const recentErrors = stats.errorHistory.slice(-10);
+				const variance = this.calculateVariance(recentErrors);
+				fitness += Math.max(0, 0.2 - variance); // Menor variância = maior fitness
+			}
+			
+			// Penalizar complexidade excessiva
+			const complexity = this.calculateGenomeComplexity(genome);
+			if (complexity > 0.8) {
+				fitness -= 0.1;
+			}
+			
+			// Bonificar diversidade genética
+			const diversity = this.calculateGenomeDiversity(genome, index);
+			fitness += diversity * 0.1;
+			
+			return Math.max(0, Math.min(1, fitness));
+		});
+	}
+	
+	calculateVariance(data) {
+		if (data.length < 2) return 0;
+		const mean = data.reduce((sum, val) => sum + val, 0) / data.length;
+		const variance = data.reduce((sum, val) => sum + (val - mean)**2, 0) / data.length;
+		return variance;
+	}
+	
+	calculateGenomeComplexity(genome) {
+		// Calcular complexidade do genoma
+		let complexity = 0;
+		
+		// Complexidade baseada nos hiperparâmetros
+		complexity += genome.genes.hiddenLayers / 10; // Mais camadas = mais complexo
+		complexity += genome.genes.hiddenSize / 2048; // Mais neurônios = mais complexo
+		complexity += (1 - genome.genes.dropout) * 0.2; // Menos dropout = mais complexo
+		
+		return Math.min(1, complexity);
+	}
+	
+	calculateGenomeDiversity(genome, index) {
+		// Calcular quão diverso este genoma é em relação aos outros
+		if (this.population.length < 2) return 0.5;
+		
+		let diversity = 0;
+		let comparisons = 0;
+		
+		this.population.forEach((otherGenome, otherIndex) => {
+			if (index !== otherIndex) {
+				const distance = this.calculateGenomeDistance(genome, otherGenome);
+				diversity += distance;
+				comparisons++;
+			}
+		});
+		
+		return comparisons > 0 ? diversity / comparisons : 0.5;
+	}
+	
+	calculateGenomeDistance(genome1, genome2) {
+		// Calcular distância euclidiana entre dois genomas
+		let distance = 0;
+		const genes = Object.keys(genome1.genes);
+		
+		genes.forEach(gene => {
+			const val1 = genome1.genes[gene];
+			const val2 = genome2.genes[gene];
+			
+			if (typeof val1 === 'number' && typeof val2 === 'number') {
+				distance += (val1 - val2)**2;
+			} else if (val1 !== val2) {
+				distance += 1; // Diferença categórica
+			}
+		});
+		
+		return Math.sqrt(distance / genes.length);
+	}
+	
+	applyHyperparametersToNetworks(neuralNetworks, bestParams) {
+		// Aplicar melhores hiperparâmetros às redes neurais
+		if (!neuralNetworks || !bestParams) return;
+		
+		try {
+			// Para cada rede neural, tentar aplicar os parâmetros relevantes
+			Object.keys(neuralNetworks).forEach(networkName => {
+				const network = neuralNetworks[networkName];
+				
+				if (network && typeof network === 'object') {
+					// Aplicar learning rate se a rede suportar
+					if (bestParams.learningRate && network.setLearningRate) {
+						network.setLearningRate(bestParams.learningRate);
+					}
+					
+					// Aplicar dropout se a rede suportar
+					if (bestParams.dropout !== undefined && network.setDropout) {
+						network.setDropout(bestParams.dropout);
+					}
+					
+					// Aplicar momentum se a rede suportar
+					if (bestParams.momentum && network.setMomentum) {
+						network.setMomentum(bestParams.momentum);
+					}
+					
+					// Aplicar regularização se a rede suportar
+					if (bestParams.regularization && network.setRegularization) {
+						network.setRegularization(bestParams.regularization);
+					}
+				}
+			});
+			
+			console.log("🧬 Applied best hyperparameters to neural networks");
+			
+		} catch (error) {
+			console.warn("🧬 Error applying hyperparameters to networks:", error.message);
+		}
+	}
 }
 
 // === BUSCA DE ARQUITETURA NEURAL ===
@@ -504,6 +687,116 @@ class NeuralArchitectureSearch {
 	
 	getBestArchitecture() {
 		return this.bestArchitecture ? this.bestArchitecture.architecture : null;
+	}
+	
+	// Método para buscar melhor arquitetura baseado em redes atuais e estatísticas
+	async searchBetterArchitecture(neuralNetworks, stats) {
+		try {
+			// Verificar se temos dados suficientes para busca de arquitetura
+			if (!stats || stats.totalPredictions < 200) {
+				console.log("🏗️ Insufficient data for architecture search");
+				return;
+			}
+			
+			// Calcular performance atual das redes
+			const currentPerformance = this.calculateCurrentNetworkPerformance(neuralNetworks, stats);
+			
+			// Executar busca de arquitetura
+			const betterArchitecture = this.searchBestArchitecture(currentPerformance);
+			
+			// Se encontrou uma arquitetura melhor, sugerir mudanças
+			if (betterArchitecture && this.bestArchitecture && 
+				this.bestArchitecture.performance > currentPerformance + 0.1) {
+				
+				this.suggestArchitectureChanges(neuralNetworks, betterArchitecture);
+				console.log(`🏗️ Better architecture found - Performance improvement: ${((this.bestArchitecture.performance - currentPerformance) * 100).toFixed(2)}%`);
+			}
+			
+		} catch (error) {
+			console.warn("🏗️ Error during architecture search:", error.message);
+		}
+	}
+	
+	calculateCurrentNetworkPerformance(neuralNetworks, stats) {
+		// Calcular performance média das redes atuais
+		let performance = 0.5; // Base performance
+		
+		// Performance baseada na precisão
+		if (stats.accuracy !== undefined) {
+			performance += stats.accuracy * 0.4;
+		}
+		
+		// Performance baseada na eficiência
+		if (stats.totalPredictions > 0 && stats.processingTime) {
+			const efficiency = stats.totalPredictions / (stats.processingTime / 1000);
+			performance += Math.min(0.3, efficiency / 1000);
+		}
+		
+		// Performance baseada na estabilidade
+		if (stats.errorHistory && stats.errorHistory.length > 10) {
+			const recentErrors = stats.errorHistory.slice(-10);
+			const avgError = recentErrors.reduce((sum, err) => sum + err, 0) / recentErrors.length;
+			performance += Math.max(0, 0.3 - avgError); // Menor erro médio = melhor performance
+		}
+		
+		return Math.max(0, Math.min(1, performance));
+	}
+	
+	suggestArchitectureChanges(neuralNetworks, architecture) {
+		// Sugerir mudanças na arquitetura das redes
+		try {
+			console.log("🏗️ Suggested architecture improvements:");
+			console.log("- Layers:", architecture.layers.length);
+			console.log("- Hidden sizes:", architecture.layers.map(l => l.neurons));
+			console.log("- Activations:", architecture.layers.map(l => l.activation));
+			console.log("- Optimizer:", architecture.optimizer);
+			console.log("- Global dropout:", architecture.globalDropout);
+			
+			// Aplicar mudanças compatíveis às redes existentes
+			this.applyArchitectureToNetworks(neuralNetworks, architecture);
+			
+		} catch (error) {
+			console.warn("🏗️ Error suggesting architecture changes:", error.message);
+		}
+	}
+	
+	applyArchitectureToNetworks(neuralNetworks, architecture) {
+		// Aplicar arquitetura às redes neurais existentes
+		if (!neuralNetworks || !architecture) return;
+		
+		try {
+			Object.keys(neuralNetworks).forEach(networkName => {
+				const network = neuralNetworks[networkName];
+				
+				if (network && typeof network === 'object') {
+					// Aplicar configurações globais
+					if (architecture.globalDropout !== undefined && network.setGlobalDropout) {
+						network.setGlobalDropout(architecture.globalDropout);
+					}
+					
+					// Aplicar otimizador
+					if (architecture.optimizer && network.setOptimizer) {
+						network.setOptimizer(architecture.optimizer);
+					}
+					
+					// Aplicar estrutura de camadas (se suportado)
+					if (architecture.layers && network.setArchitecture) {
+						network.setArchitecture(architecture.layers);
+					}
+					
+					// Aplicar ativações específicas
+					if (architecture.layers && network.setLayerActivations) {
+						const activations = architecture.layers.map(layer => layer.activation);
+						network.setLayerActivations(activations);
+					}
+				}
+			});
+			
+			console.log("🏗️ Applied architecture suggestions to neural networks");
+			
+		} catch (error) {
+			console.warn("🏗️ Error applying architecture to networks:", error.message);
+		}
 	}
 }
 
