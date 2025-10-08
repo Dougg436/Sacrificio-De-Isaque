@@ -737,12 +737,13 @@ function drawHealth() {
 		random: '❓'
 	};
 	const icon = patternIcons[player.movementPattern] || '❓';
-	const confidence = (player.patternConfidence * 100).toFixed(0);
+	const confidenceValue = player.patternConfidence || 0;
+	const confidence = (confidenceValue * 100).toFixed(0);
 	
 	// Cor baseada na confiança (verde = alta, amarelo = média, vermelho = baixa)
 	let patternColor = '#f00'; // vermelho
-	if (player.patternConfidence > 0.7) patternColor = '#0f0'; // verde
-	else if (player.patternConfidence > 0.4) patternColor = '#ff0'; // amarelo
+	if (confidenceValue > 0.7) patternColor = '#0f0'; // verde
+	else if (confidenceValue > 0.4) patternColor = '#ff0'; // amarelo
 	
 	ctx.fillStyle = patternColor;
 	ctx.strokeStyle = '#000';
