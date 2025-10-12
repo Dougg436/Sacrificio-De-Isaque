@@ -60,6 +60,211 @@ export function calculatePredictiveAngle(ex, ey, px, py, vx, vy, bulletSpeed) {
 	return Math.atan2(futureY - ey, futureX - ex);
 }
 
+/**
+ * Sistema INSANAMENTE AVANÇADO de predição - AIMBOT LEVEL
+ * @param {number} ex - posição X do atirador
+ * @param {number} ey - posição Y do atirador
+ * @param {object} player - objeto do player com histórico de movimento
+ * @param {number} bulletSpeed - velocidade do projétil
+ * @param {number} accuracy - precisão base do inimigo (0-1)
+ * @returns {number} ângulo de tiro em radianos
+ */
+export function calculateAdvancedPredictiveAngle(ex, ey, player, bulletSpeed, accuracy) {
+	const px = player.x + player.size / 2;
+	const py = player.y + player.size / 2;
+	const vx = player.velocityX || 0;
+	const vy = player.velocityY || 0;
+	const ax = player.accelerationX || 0;
+	const ay = player.accelerationY || 0;
+	
+	const dx = px - ex;
+	const dy = py - ey;
+	const distance = Math.sqrt(dx * dx + dy * dy);
+	
+	// Tempo estimado para projétil alcançar o alvo (com múltiplas iterações)
+	let timeToImpact = distance / bulletSpeed;
+	
+	// PREDIÇÃO ITERATIVA - Refinar tempo de impacto considerando movimento do alvo
+	for (let iteration = 0; iteration < 3; iteration++) {
+		const futureX = px + vx * timeToImpact + ax * timeToImpact * timeToImpact * 0.5;
+		const futureY = py + vy * timeToImpact + ay * timeToImpact * timeToImpact * 0.5;
+		const newDistance = Math.sqrt((futureX - ex) ** 2 + (futureY - ey) ** 2);
+		timeToImpact = newDistance / bulletSpeed;
+	}
+	
+	// PREDIÇÃO BASEADA EM PADRÃO DE MOVIMENTO (EXTREMAMENTE AGRESSIVA)
+	let predictedX = px;
+	let predictedY = py;
+	
+	const pattern = player.movementPattern || 'random';
+	const confidence = Math.max(player.patternConfidence || 0, 0.5); // Mínimo 50% de confiança
+	
+	// Multiplicadores agressivos baseados no padrão
+	const patternMultipliers = {
+		circular: 3.5,   // 350% mais agressivo em círculos
+		straight: 4.0,   // 400% mais agressivo em linha reta
+		strafe: 3.0,     // 300% mais agressivo em strafe
+		zigzag: 2.5,     // 250% mais agressivo em zigzag
+		random: 2.0      // 200% mais agressivo até sem padrão
+	};
+	
+	const aggressiveMultiplier = patternMultipliers[pattern] || 2.0;
+	
+	switch (pattern) {
+		case 'circular':
+			// PREDIÇÃO CIRCULAR EXTREMA
+			if (player.movementHistory && player.movementHistory.length >= 10) {
+				const history = player.movementHistory.slice(-15);
+				
+				// Calcular centro do círculo com mais precisão
+				const centerX = history.reduce((sum, h) => sum + h.x, 0) / history.length;
+				const centerY = history.reduce((sum, h) => sum + h.y, 0) / history.length;
+				const radius = Math.sqrt((px - centerX) ** 2 + (py - centerY) ** 2);
+				
+				// Calcular velocidade angular média
+				const angles = history.map(h => Math.atan2(h.y - centerY, h.x - centerX));
+				let totalAngularVelocity = 0;
+				for (let i = 1; i < angles.length; i++) {
+					let diff = angles[i] - angles[i-1];
+					while (diff > Math.PI) diff -= 2 * Math.PI;
+					while (diff < -Math.PI) diff += 2 * Math.PI;
+					totalAngularVelocity += diff;
+				}
+				const angularVelocity = totalAngularVelocity / (angles.length - 1);
+				
+				// PREVER POSIÇÃO COM ACELERAÇÃO ANGULAR
+				const currentAngle = Math.atan2(py - centerY, px - centerX);
+				const futureAngle = currentAngle + angularVelocity * timeToImpact * aggressiveMultiplier;
+				
+				// Considerar que o raio pode estar mudando (espiral)
+				const radiusChange = history.length > 5 ? 
+					(Math.sqrt((history[history.length-1].x - centerX)**2 + (history[history.length-1].y - centerY)**2) - 
+					 Math.sqrt((history[0].x - centerX)**2 + (history[0].y - centerY)**2)) / history.length : 0;
+				
+				const futureRadius = radius + radiusChange * timeToImpact * 10;
+				
+				predictedX = centerX + Math.cos(futureAngle) * futureRadius;
+				predictedY = centerY + Math.sin(futureAngle) * futureRadius;
+			} else {
+				// Fallback com aceleração
+				predictedX = px + vx * timeToImpact * aggressiveMultiplier + ax * timeToImpact * timeToImpact * 2;
+				predictedY = py + vy * timeToImpact * aggressiveMultiplier + ay * timeToImpact * timeToImpact * 2;
+			}
+			break;
+			
+		case 'zigzag':
+			// PREDIÇÃO DE ZIGZAG - Prever PRÓXIMA mudança
+			if (player.movementHistory && player.movementHistory.length >= 10) {
+				const history = player.movementHistory.slice(-10);
+				
+				// Detectar padrão de frequência de mudança
+				let lastDirections = [];
+				for (let i = 1; i < history.length; i++) {
+					const angle = Math.atan2(history[i].vy, history[i].vx);
+					lastDirections.push(angle);
+				}
+				
+				// Calcular quando provavelmente vai mudar
+				const changeFrequency = player.directionChanges / player.movementHistory.length;
+				const probableChangeIn = 1 / Math.max(changeFrequency, 0.1);
+				
+				if (probableChangeIn < timeToImpact * 60) { // vai mudar durante o voo
+					// Prever inversão de direção
+					const oppositeVx = -vx * 0.8;
+					const oppositeVy = -vy * 0.8;
+					predictedX = px + (vx * 0.3 + oppositeVx * 0.7) * timeToImpact * aggressiveMultiplier;
+					predictedY = py + (vy * 0.3 + oppositeVy * 0.7) * timeToImpact * aggressiveMultiplier;
+				} else {
+					// Não vai mudar ainda
+					predictedX = px + vx * timeToImpact * aggressiveMultiplier + ax * timeToImpact * timeToImpact * 2;
+					predictedY = py + vy * timeToImpact * aggressiveMultiplier + ay * timeToImpact * timeToImpact * 2;
+				}
+			} else {
+				predictedX = px + vx * timeToImpact * aggressiveMultiplier;
+				predictedY = py + vy * timeToImpact * aggressiveMultiplier;
+			}
+			break;
+			
+		case 'strafe':
+			// PREDIÇÃO DE STRAFE - Movimento lateral muito previsível
+			predictedX = px + vx * timeToImpact * aggressiveMultiplier * 1.2;
+			predictedY = py + vy * timeToImpact * aggressiveMultiplier * 1.2;
+			
+			// Adicionar aceleração agressivamente
+			predictedX += ax * timeToImpact * timeToImpact * 3;
+			predictedY += ay * timeToImpact * timeToImpact * 3;
+			break;
+			
+		case 'straight':
+			// PREDIÇÃO RETA - A MAIS LETAL
+			predictedX = px + vx * timeToImpact * aggressiveMultiplier * 1.5;
+			predictedY = py + vy * timeToImpact * aggressiveMultiplier * 1.5;
+			
+			// Aceleração extrema
+			predictedX += ax * timeToImpact * timeToImpact * 4;
+			predictedY += ay * timeToImpact * timeToImpact * 4;
+			break;
+			
+		case 'random':
+		default:
+			// Até sem padrão, ser agressivo
+			predictedX = px + vx * timeToImpact * aggressiveMultiplier;
+			predictedY = py + vy * timeToImpact * aggressiveMultiplier;
+			predictedX += ax * timeToImpact * timeToImpact * 1.5;
+			predictedY += ay * timeToImpact * timeToImpact * 1.5;
+			break;
+	}
+	
+	// COMPENSAÇÃO EXTREMA POR DISTÂNCIA
+	const distanceFactor = 1 + Math.min(distance / 300, 2); // até 3x mais agressivo
+	predictedX = px + (predictedX - px) * distanceFactor;
+	predictedY = py + (predictedY - py) * distanceFactor;
+	
+	// APLICAR CONFIANÇA (mas com mínimo alto)
+	const finalConfidence = Math.max(confidence, 0.7); // Mínimo 70% de confiança
+	const finalPredictedX = px + (predictedX - px) * finalConfidence;
+	const finalPredictedY = py + (predictedY - py) * finalConfidence;
+	
+	// CORREÇÃO DE TRAJETÓRIA - Refinamento TRIPLO para precisão máxima
+	// Calcular onde o player REALMENTE estará quando o tiro chegar
+	let finalX = finalPredictedX;
+	let finalY = finalPredictedY;
+	
+	// Iteração 1
+	let bulletTravelTime = Math.sqrt((finalX - ex)**2 + (finalY - ey)**2) / bulletSpeed;
+	finalX = finalPredictedX + vx * bulletTravelTime * 0.8 + ax * bulletTravelTime * bulletTravelTime * 1.5;
+	finalY = finalPredictedY + vy * bulletTravelTime * 0.8 + ay * bulletTravelTime * bulletTravelTime * 1.5;
+	
+	// Iteração 2 (refinar ainda mais)
+	bulletTravelTime = Math.sqrt((finalX - ex)**2 + (finalY - ey)**2) / bulletSpeed;
+	finalX = finalX + vx * bulletTravelTime * 0.5 + ax * bulletTravelTime * bulletTravelTime;
+	finalY = finalY + vy * bulletTravelTime * 0.5 + ay * bulletTravelTime * bulletTravelTime;
+	
+	// Iteração 3 (precisão máxima)
+	bulletTravelTime = Math.sqrt((finalX - ex)**2 + (finalY - ey)**2) / bulletSpeed;
+	const tripleRefinedX = finalX + vx * bulletTravelTime * 0.3 + ax * bulletTravelTime * bulletTravelTime * 0.5;
+	const tripleRefinedY = finalY + vy * bulletTravelTime * 0.3 + ay * bulletTravelTime * bulletTravelTime * 0.5;
+	
+	// Média ponderada de todas as predições (favor para mais refinadas)
+	const superPredictedX = finalPredictedX * 0.2 + finalX * 0.3 + tripleRefinedX * 0.5;
+	const superPredictedY = finalPredictedY * 0.2 + finalY * 0.3 + tripleRefinedY * 0.5;
+	
+	// Calcular ângulo final
+	const predictedAngle = Math.atan2(superPredictedY - ey, superPredictedX - ex);
+	
+	// APLICAR PRECISÃO (mas com mínimo altíssimo)
+	const finalAccuracy = Math.max(accuracy, 0.9); // Mínimo 90% de precisão SEMPRE
+	const directAngle = Math.atan2(dy, dx);
+	
+	let angleDiff = predictedAngle - directAngle;
+	while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+	while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+	
+	const finalAngle = directAngle + angleDiff * finalAccuracy;
+	
+	return finalAngle;
+}
+
 export function createEnemy(x, y, type = 'fly') {
 	const enemyTypes = {
 		fly: {
@@ -70,8 +275,8 @@ export function createEnemy(x, y, type = 'fly') {
 			color: '#8B4513',
 			behavior: 'chase', // chase, wander, shoot
 			shootCooldown: 0,
-			shootInterval: 3000, // atira a cada 3 segundos
-			aimAccuracy: 0.8 // 80% de precisão na mira preditiva (0.0 = sem predição, 1.0 = predição perfeita)
+			shootInterval: 2000, // REDUZIDO: atira a cada 2 segundos (era 3)
+			aimAccuracy: 0.98 // 98% de precisão - QUASE AIMBOT
 		},
 		spider: {
 			size: 35,
@@ -81,8 +286,8 @@ export function createEnemy(x, y, type = 'fly') {
 			color: '#4B0082',
 			behavior: 'wander',
 			shootCooldown: 0,
-			shootInterval: 4000, // atira a cada 4 segundos
-			aimAccuracy: 0.6 // 60% de precisão (mira pior)
+			shootInterval: 2500, // REDUZIDO: atira a cada 2.5 segundos (era 4)
+			aimAccuracy: 0.95 // 95% de precisão - EXTREMAMENTE PRECISO
 		},
 		shooter: {
 			size: 32,
@@ -92,8 +297,8 @@ export function createEnemy(x, y, type = 'fly') {
 			color: '#DC143C',
 			behavior: 'shoot',
 			shootCooldown: 0,
-			shootInterval: 2500, // atira a cada 2.5 segundos (mais rápido)
-			aimAccuracy: 0.95 // 95% de precisão (atirador expert)
+			shootInterval: 1500, // REDUZIDO: atira a cada 1.5 segundos (era 2.5)
+			aimAccuracy: 0.99 // 99% de precisão - AIMBOT LITERAL
 		}
 	};
 	
@@ -130,6 +335,7 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 	if (!enemy.canAttack) {
 		if (Date.now() - enemy.spawnTime >= ENEMY_SPAWN_DELAY) {
 			enemy.canAttack = true;
+			console.log(`Enemy ${enemy.type} can now attack!`);
 		} else {
 			// Durante o delay, inimigo fica parado
 			return { distance: 0, dx: 0, dy: 0, shouldShoot: false };
@@ -144,6 +350,12 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 	let shouldShoot = false;
 	const now = Date.now();
 	
+	// === CORREÇÃO CRÍTICA: Verificar e corrigir timestamps inválidos ===
+	if (!enemy.lastShotTime || enemy.lastShotTime > now) {
+		enemy.lastShotTime = now - enemy.shootInterval; // Permitir atirar imediatamente
+		console.log(`Fixed invalid lastShotTime for enemy ${enemy.type}`);
+	}
+	
 	if (enemy.behavior === 'chase') {
 		// Perseguir o player
 		if (distance > 0) {
@@ -154,6 +366,7 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 		if (now - enemy.lastShotTime >= enemy.shootInterval && distance < 350) {
 			shouldShoot = true;
 			enemy.lastShotTime = now;
+			console.log(`Chase enemy ${enemy.type} shooting! Distance: ${distance.toFixed(1)}`);
 		}
 	} else if (enemy.behavior === 'wander') {
 		// Movimento aleatório
@@ -169,6 +382,7 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 		if (now - enemy.lastShotTime >= enemy.shootInterval && distance < 400) {
 			shouldShoot = true;
 			enemy.lastShotTime = now;
+			console.log(`Wander enemy ${enemy.type} shooting! Distance: ${distance.toFixed(1)}`);
 		}
 	} else if (enemy.behavior === 'shoot') {
 		// Ficar parado ou mover devagar
@@ -179,6 +393,7 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 		if (now - enemy.lastShotTime >= enemy.shootInterval && distance < 450) {
 			shouldShoot = true;
 			enemy.lastShotTime = now;
+			console.log(`Shooter enemy ${enemy.type} shooting! Distance: ${distance.toFixed(1)}`);
 		}
 	}
 	
@@ -193,6 +408,11 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 	if (enemy.y + enemy.size > roomHeight - wallThickness) enemy.y = roomHeight - wallThickness - enemy.size;
 	
 	// Não precisa mais atualizar cooldown aqui - usando timestamp
+	
+	// Debugging: Log de tiro ocasional
+	if (shouldShoot) {
+		console.log(`🔫 Enemy ${enemy.type} FIRING! Time since last: ${now - (enemy.lastShotTime - enemy.shootInterval)}ms, Distance: ${distance.toFixed(1)}`);
+	}
 	
 	return { 
 		distance, 
