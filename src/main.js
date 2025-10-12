@@ -1,4 +1,4 @@
-import { player, drawPlayer, takeDamage, updatePlayer, canShoot } from './entities/player.js';
+import { player, drawPlayer, takeDamage, updatePlayer, canShoot, paralyzePlayer } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
 import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle } from './entities/enemy.js';
@@ -517,26 +517,40 @@ function saveRoomState() {
 	}
 	
 	// Salvar cópia profunda dos inimigos (posição, vida, tipo, etc)
-	currentRoom.savedState.enemies = enemies.map(enemy => ({
-		x: enemy.x,
-		y: enemy.y,
-		type: enemy.type,
-		size: enemy.size,
-		health: enemy.health,
-		maxHealth: enemy.maxHealth,
-		speed: enemy.speed,
-		damage: enemy.damage,
-		color: enemy.color,
-		behavior: enemy.behavior,
-		shootInterval: enemy.shootInterval,
-		lastShotTime: enemy.lastShotTime,
-		vx: enemy.vx,
-		vy: enemy.vy,
-		wanderTimer: enemy.wanderTimer,
-		dead: enemy.dead,
-		spawnTime: enemy.spawnTime,
-		canAttack: enemy.canAttack
-	}));
+	currentRoom.savedState.enemies = enemies.map(enemy => {
+		const savedEnemy = {
+			x: enemy.x,
+			y: enemy.y,
+			type: enemy.type,
+			size: enemy.size,
+			health: enemy.health,
+			maxHealth: enemy.maxHealth,
+			speed: enemy.speed,
+			damage: enemy.damage,
+			color: enemy.color,
+			behavior: enemy.behavior,
+			shootInterval: enemy.shootInterval,
+			lastShotTime: enemy.lastShotTime,
+			vx: enemy.vx,
+			vy: enemy.vy,
+			wanderTimer: enemy.wanderTimer,
+			dead: enemy.dead,
+			spawnTime: enemy.spawnTime,
+			canAttack: enemy.canAttack
+		};
+		
+		// Adicionar propriedades específicas do phantom
+		if (enemy.type === 'phantom') {
+			savedEnemy.isVisible = enemy.isVisible;
+			savedEnemy.invisibilityDuration = enemy.invisibilityDuration;
+			savedEnemy.invisibilityStartTime = enemy.invisibilityStartTime;
+			savedEnemy.repositionOnInvisible = enemy.repositionOnInvisible;
+			savedEnemy.repositionTimer = enemy.repositionTimer;
+			savedEnemy.originalColor = enemy.originalColor;
+		}
+		
+		return savedEnemy;
+	});
 	
 	// Salvar bullets (opcional, mas pode ser útil)
 	currentRoom.savedState.bullets = bullets.map(bullet => ({
@@ -608,7 +622,28 @@ function loadRoomState() {
 			if (enemy.vy === undefined) enemy.vy = 0;
 			if (enemy.wanderTimer === undefined) enemy.wanderTimer = 0;
 			
-			console.log(`Restored enemy ${enemy.type}: canAttack=${enemy.canAttack}, lastShot=${currentTime - enemy.lastShotTime}ms ago`);
+			// Restaurar propriedades específicas do phantom
+			if (enemy.type === 'phantom') {
+				// Garantir que propriedades do phantom existam
+				if (enemy.isVisible === undefined) enemy.isVisible = true;
+				if (!enemy.invisibilityDuration) enemy.invisibilityDuration = 4000;
+				if (!enemy.invisibilityStartTime) enemy.invisibilityStartTime = 0;
+				if (enemy.repositionOnInvisible === undefined) enemy.repositionOnInvisible = true;
+				if (!enemy.repositionTimer) enemy.repositionTimer = 0;
+				if (!enemy.originalColor) enemy.originalColor = enemy.color;
+				
+				// Validar estado de invisibilidade
+				if (!enemy.isVisible && enemy.invisibilityStartTime > 0) {
+					// Verificar se invisibilidade já deveria ter acabado
+					if (currentTime - enemy.invisibilityStartTime >= enemy.invisibilityDuration) {
+						enemy.isVisible = true;
+						enemy.invisibilityStartTime = 0;
+						console.log(`Phantom restaurado como visível (invisibilidade expirada)`);
+					}
+				}
+			}
+			
+			console.log(`Restored enemy ${enemy.type}: canAttack=${enemy.canAttack}, lastShot=${currentTime - enemy.lastShotTime}ms ago${enemy.type === 'phantom' ? `, visible=${enemy.isVisible}` : ''}`);
 			
 			return enemy;
 		});
@@ -623,11 +658,65 @@ function loadRoomState() {
 			...savedPowerup
 		}));
 		
-		console.log(`Loaded room state: ${enemies.length} enemies, ${bullets.length} bullets, ${powerUps.length} powerups`);
+		// === VERIFICAR LIMITE DE PHANTOMS EM ESTADOS SALVOS ===
+		const phantomCount = countLivePhantoms();
+		if (phantomCount > 2) {
+			console.warn(`Sala salva tinha ${phantomCount} Phantoms. Aplicando limite de 2...`);
+			// Converter Phantoms excedentes para outros tipos
+			let phantomsConverted = 0;
+			const nonPhantomTypes = ['fly', 'spider', 'shooter'];
+			
+			for (let i = 0; i < enemies.length && phantomsConverted < (phantomCount - 2); i++) {
+				if (enemies[i].type === 'phantom' && !enemies[i].dead) {
+					const newType = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
+					console.log(`Converting excess Phantom to ${newType}`);
+					
+					// Manter posição e vida, mas mudar tipo e propriedades
+					const originalEnemy = enemies[i];
+					enemies[i] = createEnemy(originalEnemy.x, originalEnemy.y, newType);
+					enemies[i].health = originalEnemy.health;
+					enemies[i].canAttack = originalEnemy.canAttack;
+					enemies[i].spawnTime = originalEnemy.spawnTime;
+					
+					phantomsConverted++;
+				}
+			}
+		}
+		
+		console.log(`Loaded room state: ${enemies.length} enemies (${countLivePhantoms()} phantoms), ${bullets.length} bullets, ${powerUps.length} powerups`);
 		return true; // Estado foi carregado
 	}
 	
 	return false; // Sem estado salvo, precisa gerar novo
+}
+
+// Função para contar Phantoms vivos na sala atual
+function countLivePhantoms() {
+	return enemies.filter(enemy => enemy.type === 'phantom' && !enemy.dead).length;
+}
+
+// Função de debug para forçar spawn de Phantoms (apenas para teste)
+function debugSpawnPhantoms() {
+	console.log('DEBUG: Tentando spawnar 5 Phantoms para testar limite...');
+	const testTypes = ['phantom', 'phantom', 'phantom', 'phantom', 'phantom'];
+	
+	for (let i = 0; i < testTypes.length; i++) {
+		const x = Math.random() * (roomWidth - 200) + 100;
+		const y = Math.random() * (roomHeight - 200) + 100;
+		let type = testTypes[i];
+		
+		// Aplicar mesma lógica de limitação
+		if (type === 'phantom' && countLivePhantoms() >= 2) {
+			const nonPhantomTypes = ['fly', 'spider', 'shooter'];
+			type = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
+			console.log(`DEBUG: Phantom ${i+1} blocked - limit reached. Spawning ${type} instead.`);
+		}
+		
+		enemies.push(createEnemy(x, y, type));
+	}
+	
+	const finalPhantomCount = countLivePhantoms();
+	console.log(`DEBUG: Resultado final: ${finalPhantomCount} Phantoms spawrados (máximo esperado: 2)`);
 }
 
 // Spawn inimigos da sala atual (apenas primeira visita)
@@ -649,14 +738,27 @@ function spawnRoomEnemies() {
 	// Spawnar inimigos baseado na sala atual
 	if (currentRoom.type !== 'start' && currentRoom.type !== 'treasure') {
 		const enemyCount = currentRoom.type === 'boss' ? 0 : Math.floor(Math.random() * 4) + 4; // 4-7 inimigos
-		const enemyTypes = ['fly', 'spider', 'shooter'];
+		const enemyTypes = ['fly', 'spider', 'shooter', 'phantom'];
 		
 		for (let i = 0; i < enemyCount; i++) {
 			const x = Math.random() * (roomWidth - 200) + 100;
 			const y = Math.random() * (roomHeight - 200) + 100;
-			const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+			let type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+			
+			// === LIMITAÇÃO DE PHANTOMS: MÁXIMO 2 POR SALA ===
+			if (type === 'phantom' && countLivePhantoms() >= 2) {
+				// Se já tem 2 ou mais Phantoms, escolher outro tipo aleatório
+				const nonPhantomTypes = ['fly', 'spider', 'shooter'];
+				type = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
+				console.log('Phantom spawn blocked - limit reached. Spawning', type, 'instead.');
+			}
+			
 			enemies.push(createEnemy(x, y, type));
 		}
+		
+		// Log de spawn para monitoramento
+		const phantomCount = countLivePhantoms();
+		console.log(`Spawned ${enemyCount} enemies in room (${phantomCount} phantoms, limit: 2)`);
 	}
 	
 	// Spawnar powerups APENAS em salas de tesouro E apenas se ainda não foi coletado
@@ -1221,20 +1323,30 @@ function drawHealth() {
 	ctx.strokeText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
 	ctx.fillText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
 	
-	// Padrão de movimento detectado (DEBUG - pode ser removido)
-	if (player.movementPattern && player.patternConfidence > 0.3) {
-		const patternIcons = {
-			circular: '🔄',
-			zigzag: '⚡',
-			strafe: '↔️',
-			straight: '➡️',
-			random: '❓'
-		};
-		const icon = patternIcons[player.movementPattern] || '❓';
-		const confidence = (player.patternConfidence * 100).toFixed(0);
-		ctx.fillStyle = player.patternConfidence > 0.6 ? '#ff0' : '#aaa';
-		ctx.strokeText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
-		ctx.fillText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
+	// Estado de paralização
+	if (player.paralyzed) {
+		const timeLeft = Math.max(0, player.paralyzedDuration - (Date.now() - player.paralyzedTime));
+		const secondsLeft = (timeLeft / 1000).toFixed(1);
+		
+		ctx.fillStyle = '#4169E1';
+		ctx.strokeText(`🚫 PARALISADO: ${secondsLeft}s`, statsX, statsY + 60);
+		ctx.fillText(`🚫 PARALISADO: ${secondsLeft}s`, statsX, statsY + 60);
+	} else {
+		// Padrão de movimento detectado (DEBUG - pode ser removido)
+		if (player.movementPattern && player.patternConfidence > 0.3) {
+			const patternIcons = {
+				circular: '🔄',
+				zigzag: '⚡',
+				strafe: '↔️',
+				straight: '➡️',
+				random: '❓'
+			};
+			const icon = patternIcons[player.movementPattern] || '❓';
+			const confidence = (player.patternConfidence * 100).toFixed(0);
+			ctx.fillStyle = player.patternConfidence > 0.6 ? '#ff0' : '#aaa';
+			ctx.strokeText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
+			ctx.fillText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
+		}
 	}
 }
 
@@ -1479,11 +1591,13 @@ async function update() {
 	// Atualizar player (invulnerabilidade, etc)
 	updatePlayer();
 	
-	// Movimento
-	if (keys['w']) player.y -= player.speed;
-	if (keys['s']) player.y += player.speed;
-	if (keys['a']) player.x -= player.speed;
-	if (keys['d']) player.x += player.speed;
+	// Movimento (apenas se não estiver paralisado)
+	if (!player.paralyzed) {
+		if (keys['w']) player.y -= player.speed;
+		if (keys['s']) player.y += player.speed;
+		if (keys['a']) player.x -= player.speed;
+		if (keys['d']) player.x += player.speed;
+	}
 
 	// Verificar colisões com paredes (deve vir antes das transições)
 	checkWallCollisions();
@@ -1494,6 +1608,16 @@ async function update() {
 			bossDefeated = true;
 			trapdoorSpawned = true;
 		}
+	}
+	
+	// Debug: pressionar T para testar limite de Phantoms
+	if (keys['t'] || keys['T']) {
+		if (!keys['phantomTestPressed']) {
+			keys['phantomTestPressed'] = true;
+			debugSpawnPhantoms();
+		}
+	} else {
+		keys['phantomTestPressed'] = false;
 	}
 
 	// Verificar transições de sala
@@ -1621,7 +1745,16 @@ async function update() {
 		
 		// Verificar colisão com player
 		if (checkEnemyCollision(enemy, player)) {
-			takeDamage(enemy.damage);
+			if (enemy.type === 'phantom') {
+				// Phantom paralisa o jogador em vez de causar dano direto
+				const paralyzed = paralyzePlayer(enemy, 2000); // 2 segundos
+				if (paralyzed) {
+					console.log('🚫 Phantom paralisou o jogador!');
+				}
+			} else {
+				// Outros inimigos causam dano normal
+				takeDamage(enemy.damage);
+			}
 		}
 		
 		// Verificar colisão com bullets do player
@@ -1634,8 +1767,11 @@ async function update() {
 			const distance = Math.sqrt(dx*dx + dy*dy);
 			
 			if (distance < enemy.size/2 + bullet.size/2) {
-				damageEnemy(enemy, bullet.damage);
-				bullets.splice(bIndex, 1);
+				// Tentar causar dano - só remove bala se dano foi aplicado
+				const damageApplied = damageEnemy(enemy, bullet.damage, player);
+				if (damageApplied) {
+					bullets.splice(bIndex, 1);
+				}
 			}
 		});
 	});
@@ -1811,10 +1947,62 @@ async function update() {
 	if (keys['p']) {
 		ctx.fillStyle = "yellow";
 		ctx.font = "16px Arial";
-		ctx.fillText("DEBUG: Press P to spawn trapdoor", 10, roomHeight - 60);
+		ctx.fillText("DEBUG: Press P to spawn trapdoor | T to test phantom limit", 10, roomHeight - 60);
+	}
+	
+	// Info sobre Phantoms na sala atual
+	const currentPhantoms = countLivePhantoms();
+	if (currentPhantoms > 0) {
+		ctx.fillStyle = "#9d4edd";
+		ctx.font = "14px Arial";
+		ctx.fillText(`Phantoms na sala: ${currentPhantoms}/2`, 10, roomHeight - 100);
 	}
 	
 	drawPlayer(ctx, mouseX, mouseY);
+	
+	// === EFEITOS DE PARALIZAÇÃO ===
+	if (player.paralyzed) {
+		// Círculo de paralização ao redor do player
+		const pulseRadius = 30 + Math.sin(Date.now() / 150) * 8;
+		ctx.strokeStyle = '#4169E1';
+		ctx.lineWidth = 4;
+		ctx.setLineDash([10, 5]);
+		ctx.beginPath();
+		ctx.arc(player.x + player.size/2, player.y + player.size/2, pulseRadius, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.setLineDash([]);
+		
+		// Texto de paralização
+		ctx.fillStyle = '#4169E1';
+		ctx.font = 'bold 16px Arial';
+		ctx.textAlign = 'center';
+		ctx.strokeStyle = '#000';
+		ctx.lineWidth = 3;
+		ctx.strokeText('PARALISADO!', player.x + player.size/2, player.y - 15);
+		ctx.fillText('PARALISADO!', player.x + player.size/2, player.y - 15);
+		
+		// Barra de tempo de paralização
+		const timeLeft = Math.max(0, player.paralyzedDuration - (Date.now() - player.paralyzedTime));
+		const timePercent = timeLeft / player.paralyzedDuration;
+		
+		const barWidth = 60;
+		const barHeight = 8;
+		const barX = player.x + player.size/2 - barWidth/2;
+		const barY = player.y + player.size + 10;
+		
+		// Fundo da barra
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+		ctx.fillRect(barX, barY, barWidth, barHeight);
+		
+		// Progresso da paralização
+		ctx.fillStyle = '#4169E1';
+		ctx.fillRect(barX, barY, barWidth * timePercent, barHeight);
+		
+		// Borda da barra
+		ctx.strokeStyle = '#000';
+		ctx.lineWidth = 2;
+		ctx.strokeRect(barX, barY, barWidth, barHeight);
+	}
 	
 	// Desenhar visualização da IA ULTRA PRECISA (se ativada)
 	drawUltraPreciseAIVisualization();

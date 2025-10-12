@@ -299,12 +299,32 @@ export function createEnemy(x, y, type = 'fly') {
 			shootCooldown: 0,
 			shootInterval: 1500, // REDUZIDO: atira a cada 1.5 segundos (era 2.5)
 			aimAccuracy: 0.99 // 99% de precisão - AIMBOT LITERAL
+		},
+		phantom: {
+			size: 38,
+			health: 6,
+			speed: 2.8, // Aumentado para melhor perseguição
+			damage: 3, // Aumentado - dano corpo a corpo mais perigoso
+			color: '#663399', // Roxo para phantom
+			behavior: 'phantom_hunt', // Comportamento de caça híbrido
+			shootCooldown: 0,
+			shootInterval: 2200, // Atira a cada 2.2 segundos
+			aimAccuracy: 0.92, // 92% de precisão
+			// Propriedades específicas do phantom
+			isVisible: true, // Estado de visibilidade
+			invisibilityDuration: 4000, // 4 segundos invisível
+			invisibilityStartTime: 0, // Quando ficou invisível
+			repositionOnInvisible: true, // Se reposiciona quando invisível
+			repositionTimer: 0, // Timer para reposicionamento
+			hitCount: 0, // Contador de tiros recebidos
+			isCompletelyInvisible: false, // Estado de invisibilidade completa após 2 hits
+			hasTeleported: false // Flag para controlar teleporte no 4º segundo
 		}
 	};
 	
 	const template = enemyTypes[type] || enemyTypes.fly;
 	
-	return {
+	const enemy = {
 		x,
 		y,
 		type,
@@ -326,6 +346,21 @@ export function createEnemy(x, y, type = 'fly') {
 		spawnTime: Date.now(), // Tempo de spawn para delay inicial
 		canAttack: false // Só pode atacar após o delay
 	};
+
+	// Adicionar propriedades específicas do phantom
+	if (type === 'phantom') {
+		enemy.isVisible = template.isVisible;
+		enemy.invisibilityDuration = template.invisibilityDuration;
+		enemy.invisibilityStartTime = template.invisibilityStartTime;
+		enemy.repositionOnInvisible = template.repositionOnInvisible;
+		enemy.repositionTimer = template.repositionTimer;
+		enemy.hitCount = template.hitCount;
+		enemy.isCompletelyInvisible = template.isCompletelyInvisible;
+		enemy.hasTeleported = template.hasTeleported;
+		enemy.originalColor = template.color; // Salvar cor original
+	}
+
+	return enemy;
 }
 
 export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness = 20) {
@@ -356,7 +391,120 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 		console.log(`Fixed invalid lastShotTime for enemy ${enemy.type}`);
 	}
 	
-	if (enemy.behavior === 'chase') {
+	// === LÓGICA ESPECIAL PARA PHANTOM ===
+	if (enemy.type === 'phantom') {
+		// Verificar se deve teleportar no 4º segundo (quando completamente invisível)
+		if (!enemy.isVisible && enemy.isCompletelyInvisible && !enemy.hasTeleported &&
+			now - enemy.invisibilityStartTime >= (enemy.invisibilityDuration - 100)) { // 100ms antes de reaparecer
+			
+			// Teleportar próximo ao jogador no último momento
+			teleportPhantomNearPlayer(enemy, player);
+			enemy.hasTeleported = true;
+		}
+		
+		// Verificar se deve voltar ao estado visível
+		if (!enemy.isVisible && now - enemy.invisibilityStartTime >= enemy.invisibilityDuration) {
+			enemy.isVisible = true;
+			enemy.isCompletelyInvisible = false; // Resetar invisibilidade completa
+			enemy.hasTeleported = false; // Resetar flag de teleporte
+			enemy.invisibilityStartTime = 0;
+			
+			// Aparição agressiva: investida imediata em direção ao jogador
+			if (distance > 0) {
+				enemy.vx = (dx / distance) * enemy.speed * 0.8;
+				enemy.vy = (dy / distance) * enemy.speed * 0.8;
+			}
+			
+			// Cooldown de tiro reduzido para ataque imediato se não conseguir contato
+			enemy.lastShotTime = now - (enemy.shootInterval * 0.7); // 70% do cooldown já "passado"
+			
+			const visibilityType = enemy.isCompletelyInvisible ? 'COMPLETAMENTE' : 'normalmente';
+			console.log(`Phantom apareceu ${visibilityType} e está investindo!`);
+		}
+		
+		// Comportamento durante invisibilidade
+		if (!enemy.isVisible) {
+			// Durante invisibilidade: reposicionamento estratégico para próxima investida
+			
+			// Reduzir movimento gradualmente
+			enemy.vx *= 0.90;
+			enemy.vy *= 0.90;
+			
+			// Reposicionamento estratégico
+			if (enemy.repositionOnInvisible && enemy.repositionTimer <= 0) {
+				if (distance > 0) {
+					if (distance > 400) {
+						// Se muito longe, aproximar-se sutilmente para melhor posição de ataque
+						enemy.vx += (dx / distance) * enemy.speed * 0.3;
+						enemy.vy += (dy / distance) * enemy.speed * 0.3;
+						enemy.repositionTimer = 40 + Math.random() * 20; // 40-60 frames
+					} else if (distance < 120) {
+						// Se muito perto, afastar-se para criar distância de investida
+						const awayX = -dx / distance;
+						const awayY = -dy / distance;
+						enemy.vx += awayX * enemy.speed * 0.5;
+						enemy.vy += awayY * enemy.speed * 0.5;
+						enemy.repositionTimer = 50 + Math.random() * 30; // 50-80 frames
+					} else {
+						// Distância ideal (120-400px) - posicionamento lateral para flanquear
+						const perpX = -dy / distance; // Movimento perpendicular
+						const perpY = dx / distance;
+						const side = Math.random() < 0.5 ? 1 : -1; // Escolher lado aleatório
+						
+						enemy.vx += perpX * side * enemy.speed * 0.4;
+						enemy.vy += perpY * side * enemy.speed * 0.4;
+						enemy.repositionTimer = 60 + Math.random() * 40; // 60-100 frames
+					}
+				}
+			}
+			enemy.repositionTimer = Math.max(0, enemy.repositionTimer - 1);
+			shouldShoot = false; // Não pode atirar quando invisível
+		} else {
+			// Comportamento quando visível: ataque híbrido (projéteis + aproximação para contato)
+			
+			if (distance > 0) {
+				// === ESTRATÉGIA BASEADA NA DISTÂNCIA ===
+				if (distance > 300) {
+					// LONGA DISTÂNCIA: Aproximar-se atirando
+					enemy.vx = (dx / distance) * enemy.speed * 0.6;
+					enemy.vy = (dy / distance) * enemy.speed * 0.6;
+					
+					// Atira enquanto se aproxima
+					if (now - enemy.lastShotTime >= enemy.shootInterval) {
+						shouldShoot = true;
+						enemy.lastShotTime = now;
+						console.log(`Phantom shooting while approaching! Distance: ${distance.toFixed(1)}`);
+					}
+				} else if (distance > 80) {
+					// MÉDIA DISTÂNCIA: Investida agressiva para contato corpo a corpo
+					enemy.vx = (dx / distance) * enemy.speed * 1.2; // Mais rápido para o contato
+					enemy.vy = (dy / distance) * enemy.speed * 1.2;
+					
+					// Atira ocasionalmente durante a investida
+					if (now - enemy.lastShotTime >= (enemy.shootInterval * 1.5)) {
+						shouldShoot = true;
+						enemy.lastShotTime = now;
+						console.log(`Phantom charging and shooting! Distance: ${distance.toFixed(1)}`);
+					}
+				} else {
+					// CURTA DISTÂNCIA: Ataque corpo a corpo prioritário
+					// Movimento errático para dificultar esquiva do jogador
+					const erraticX = (Math.random() - 0.5) * enemy.speed * 0.4;
+					const erraticY = (Math.random() - 0.5) * enemy.speed * 0.4;
+					
+					enemy.vx = ((dx / distance) * enemy.speed * 0.8) + erraticX;
+					enemy.vy = ((dy / distance) * enemy.speed * 0.8) + erraticY;
+					
+					// Raramente atira em curta distância (foco no contato)
+					if (now - enemy.lastShotTime >= (enemy.shootInterval * 2)) {
+						shouldShoot = true;
+						enemy.lastShotTime = now;
+						console.log(`Phantom melee focus! Distance: ${distance.toFixed(1)}`);
+					}
+				}
+			}
+		}
+	} else if (enemy.behavior === 'chase') {
 		// Perseguir o player
 		if (distance > 0) {
 			enemy.vx = (dx / distance) * enemy.speed;
@@ -395,6 +543,9 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 			enemy.lastShotTime = now;
 			console.log(`Shooter enemy ${enemy.type} shooting! Distance: ${distance.toFixed(1)}`);
 		}
+	} else if (enemy.behavior === 'phantom_shoot' || enemy.behavior === 'phantom_hunt') {
+		// Comportamento para phantom já foi tratado acima
+		// Esta seção existe apenas para compatibilidade
 	}
 	
 	// Aplicar velocidade
@@ -431,14 +582,169 @@ export function updateEnemy(enemy, player, roomWidth, roomHeight, wallThickness 
 export function drawEnemy(ctx, enemy) {
 	if (enemy.dead) return;
 	
-	// Corpo do inimigo
-	ctx.fillStyle = enemy.color;
-	ctx.fillRect(enemy.x, enemy.y, enemy.size, enemy.size);
-	
-	// Borda
-	ctx.strokeStyle = '#000';
-	ctx.lineWidth = 2;
-	ctx.strokeRect(enemy.x, enemy.y, enemy.size, enemy.size);
+	// === EFEITOS ESPECIAIS PARA PHANTOM ===
+	if (enemy.type === 'phantom') {
+		// Calcular transparência baseada na visibilidade e hitCount
+		let alpha = 1.0;
+		let glowEffect = false;
+		
+		if (!enemy.isVisible) {
+			if (enemy.isCompletelyInvisible) {
+				// Phantom COMPLETAMENTE invisível após 2+ hits: não aparece nada!
+				alpha = 0.0; // Totalmente invisível
+			} else {
+				// Phantom invisível normal (1-2 hits): quase transparente
+				alpha = 0.1; // Apenas 10% de opacidade
+			}
+		} else {
+			// Phantom visível: verificar se está prestes a ficar invisível novamente
+			const timeSinceVisible = Date.now() - (enemy.invisibilityStartTime === 0 ? enemy.spawnTime : enemy.invisibilityStartTime + enemy.invisibilityDuration);
+			
+			// Efeito de piscada quando está prestes a atacar ou recém ficou visível
+			if (timeSinceVisible < 1000) { // Primeiro segundo após ficar visível
+				alpha = 0.7 + Math.sin(Date.now() / 100) * 0.3; // Piscada suave
+				glowEffect = true;
+			}
+		}
+		
+		// Salvar contexto para aplicar transparência
+		ctx.save();
+		ctx.globalAlpha = alpha;
+		
+		// Efeito de brilho quando visível
+		if (glowEffect) {
+			ctx.shadowBlur = 15;
+			ctx.shadowColor = enemy.originalColor || enemy.color;
+		}
+		
+		// Corpo do phantom (BOLA ROXA com gradiente)
+		const centerX = enemy.x + enemy.size/2;
+		const centerY = enemy.y + enemy.size/2;
+		const radius = enemy.size/2;
+		
+		// Gradiente radial para dar profundidade 3D
+		const gradient = ctx.createRadialGradient(
+			centerX - radius/3, centerY - radius/3, 0,  // Ponto de luz (canto superior esquerdo)
+			centerX, centerY, radius                      // Círculo completo
+		);
+		gradient.addColorStop(0, '#9966CC');    // Roxo claro no centro (highlight)
+		gradient.addColorStop(0.7, enemy.color); // Cor original do phantom
+		gradient.addColorStop(1, '#4A1A4A');     // Roxo escuro na borda (sombra)
+		
+		ctx.fillStyle = gradient;
+		ctx.beginPath();
+		ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+		ctx.fill();
+		
+		// Reflexo para efeito 3D (pequeno círculo brilhante no topo)
+		if (enemy.isVisible || alpha > 0.3) {
+			const highlightX = centerX - radius/4;
+			const highlightY = centerY - radius/4;
+			const highlightRadius = radius/4;
+			
+			const highlightGradient = ctx.createRadialGradient(
+				highlightX, highlightY, 0,
+				highlightX, highlightY, highlightRadius
+			);
+			highlightGradient.addColorStop(0, 'rgba(255, 255, 255, 0.6)');
+			highlightGradient.addColorStop(0.8, 'rgba(255, 255, 255, 0.2)');
+			highlightGradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+			
+			ctx.fillStyle = highlightGradient;
+			ctx.beginPath();
+			ctx.arc(highlightX, highlightY, highlightRadius, 0, Math.PI * 2);
+			ctx.fill();
+		}
+		
+		// Borda especial para phantom (circular)
+		ctx.strokeStyle = enemy.isVisible ? '#000' : '#666';
+		ctx.lineWidth = enemy.isVisible ? 3 : 2;
+		ctx.beginPath();
+		ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+		ctx.stroke();
+		
+		// Efeitos visuais especiais para bola roxa
+		if (!enemy.isVisible) {
+			// Círculos concêntricos pulsantes durante invisibilidade
+			const pulseRadius1 = (enemy.size/2) + 15 + Math.sin(Date.now() / 200) * 8;
+			const pulseRadius2 = (enemy.size/2) + 25 + Math.sin(Date.now() / 150) * 6;
+			
+			ctx.strokeStyle = `rgba(153, 102, 204, ${alpha * 0.6})`;
+			ctx.lineWidth = 2;
+			ctx.setLineDash([5, 5]);
+			
+			// Primeiro círculo
+			ctx.beginPath();
+			ctx.arc(centerX, centerY, pulseRadius1, 0, Math.PI * 2);
+			ctx.stroke();
+			
+			// Segundo círculo
+			ctx.beginPath();
+			ctx.arc(centerX, centerY, pulseRadius2, 0, Math.PI * 2);
+			ctx.stroke();
+			
+			ctx.setLineDash([]);
+		} else {
+			// Efeito de energia quando se movendo rapidamente (investida)
+			const speed = Math.sqrt(enemy.vx * enemy.vx + enemy.vy * enemy.vy);
+			if (speed > 2) {
+				// Rastro energético atrás da bola
+				ctx.strokeStyle = `rgba(153, 102, 204, 0.6)`;
+				ctx.lineWidth = 4;
+				ctx.lineCap = 'round';
+				
+				// Múltiplas linhas de rastro para efeito de energia
+				for (let i = 1; i <= 3; i++) {
+					const trailX = centerX - (enemy.vx * i * 2);
+					const trailY = centerY - (enemy.vy * i * 2);
+					
+					ctx.globalAlpha = alpha * (0.8 - i * 0.2);
+					ctx.beginPath();
+					ctx.moveTo(trailX, trailY);
+					ctx.lineTo(centerX, centerY);
+					ctx.stroke();
+				}
+				ctx.globalAlpha = alpha; // Restaurar alpha
+			}
+			
+			// Brilho sutil quando visível e com efeito de glow
+			if (glowEffect) {
+				const glowGradient = ctx.createRadialGradient(
+					centerX, centerY, 0,
+					centerX, centerY, enemy.size/2 + 10
+				);
+				glowGradient.addColorStop(0, 'rgba(153, 102, 204, 0)');
+				glowGradient.addColorStop(1, 'rgba(153, 102, 204, 0.3)');
+				
+				ctx.fillStyle = glowGradient;
+				ctx.beginPath();
+				ctx.arc(centerX, centerY, enemy.size/2 + 10, 0, Math.PI * 2);
+				ctx.fill();
+			}
+		}
+		
+		// Restaurar contexto
+		ctx.restore();
+		
+		// Indicador de estado (apenas visível se phantom estiver invisível)
+		if (!enemy.isVisible) {
+			ctx.fillStyle = 'rgba(102, 51, 153, 0.6)';
+			ctx.font = '12px Arial';
+			ctx.textAlign = 'center';
+			ctx.fillText('INVISÍVEL', enemy.x + enemy.size/2, enemy.y - 15);
+		}
+		
+	} else {
+		// === RENDERIZAÇÃO NORMAL PARA OUTROS INIMIGOS ===
+		// Corpo do inimigo
+		ctx.fillStyle = enemy.color;
+		ctx.fillRect(enemy.x, enemy.y, enemy.size, enemy.size);
+		
+		// Borda
+		ctx.strokeStyle = '#000';
+		ctx.lineWidth = 2;
+		ctx.strokeRect(enemy.x, enemy.y, enemy.size, enemy.size);
+	}
 	
 	// Indicador visual durante o delay de spawn (círculo amarelo piscando)
 	if (!enemy.canAttack && Math.floor(Date.now() / 200) % 2 === 0) {
@@ -448,8 +754,8 @@ export function drawEnemy(ctx, enemy) {
 		ctx.fill();
 	}
 	
-	// Barra de vida
-	if (enemy.health < enemy.maxHealth) {
+	// Barra de vida (apenas para inimigos visíveis ou parcialmente visíveis)
+	if (enemy.health < enemy.maxHealth && (enemy.type !== 'phantom' || enemy.isVisible)) {
 		const barWidth = enemy.size;
 		const barHeight = 4;
 		const barX = enemy.x;
@@ -469,6 +775,11 @@ export function drawEnemy(ctx, enemy) {
 export function checkEnemyCollision(enemy, player) {
 	if (enemy.dead || player.invulnerable) return false;
 	
+	// === PHANTOM INVISÍVEL NÃO COLIDE ===
+	if (enemy.type === 'phantom' && !enemy.isVisible) {
+		return false; // Phantom invisível não pode colidir
+	}
+	
 	return (
 		player.x < enemy.x + enemy.size &&
 		player.x + player.size > enemy.x &&
@@ -477,10 +788,83 @@ export function checkEnemyCollision(enemy, player) {
 	);
 }
 
-export function damageEnemy(enemy, damage) {
+export function damageEnemy(enemy, damage, player = null) {
+	// === VERIFICAR SE PHANTOM PODE RECEBER DANO ===
+	if (enemy.type === 'phantom' && !enemy.isVisible) {
+		console.log('Phantom é imune ao dano enquanto invisível!');
+		return false; // Não causou dano
+	}
+
 	enemy.health -= damage;
+	
+	// === SISTEMA ESCALONADO DE DANO DO PHANTOM ===
+	if (enemy.type === 'phantom' && enemy.health > 0 && enemy.isVisible) {
+		enemy.hitCount++;
+		console.log(`Phantom recebeu hit ${enemy.hitCount}!`);
+		
+		if (enemy.hitCount <= 2) {
+			// Primeiros 2 hits: invisibilidade normal
+			enemy.isVisible = false;
+			enemy.isCompletelyInvisible = false;
+			enemy.invisibilityStartTime = Date.now();
+			enemy.repositionTimer = 0;
+			console.log(`Phantom ficou invisível (hit ${enemy.hitCount}/2)!`);
+		} else if (enemy.hitCount >= 3) {
+			// 3º hit ou mais: invisibilidade completa (teleporte acontece no 4º segundo)
+			enemy.isVisible = false;
+			enemy.isCompletelyInvisible = true;
+			enemy.invisibilityStartTime = Date.now();
+			enemy.repositionTimer = 0;
+			enemy.hasTeleported = false; // Flag para controlar se já teleportou
+			
+			// Sem texto quando fica completamente invisível
+		}
+	}
+	
 	if (enemy.health <= 0) {
 		enemy.dead = true;
 		enemy.health = 0;
 	}
+	
+	return true; // Causou dano
+}
+
+/**
+ * Teleporta o Phantom para uma posição aleatória próxima ao jogador
+ * @param {Object} phantom - O inimigo Phantom
+ * @param {Object} player - O jogador
+ */
+function teleportPhantomNearPlayer(phantom, player) {
+	if (!player) {
+		console.warn('Player não encontrado para teleporte do Phantom');
+		return;
+	}
+	
+	// Calcular centro do jogador
+	const playerCenterX = player.x + (player.size || 32) / 2;
+	const playerCenterY = player.y + (player.size || 32) / 2;
+	
+	// Raio de teleporte: 150px
+	const teleportRadius = 150;
+	
+	// Gerar ângulo aleatório
+	const angle = Math.random() * Math.PI * 2;
+	
+	// Gerar distância aleatória entre 80px e 150px (não muito perto, não muito longe)
+	const minDistance = 80;
+	const distance = minDistance + Math.random() * (teleportRadius - minDistance);
+	
+	// Calcular nova posição
+	const newX = playerCenterX + Math.cos(angle) * distance - phantom.size / 2;
+	const newY = playerCenterY + Math.sin(angle) * distance - phantom.size / 2;
+	
+	// Aplicar teleporte
+	phantom.x = newX;
+	phantom.y = newY;
+	
+	// Resetar velocidade para evitar movimento estranho
+	phantom.vx = 0;
+	phantom.vy = 0;
+	
+	// Teleporte silencioso - sem texto no console
 }

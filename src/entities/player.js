@@ -14,6 +14,11 @@ export let player = {
 	invulnerableTime: 0,
 	fireRate: BASE_FIRE_RATE, // Taxa de tiro em ms
 	lastShotTime: 0, // Timestamp do último tiro
+	// Sistema de paralização por Phantom
+	paralyzed: false,
+	paralyzedTime: 0,
+	paralyzedDuration: 2000, // 2 segundos paralisado
+	paralyzedBy: null, // Qual inimigo causou a paralização
 	// Sistema avançado de rastreamento de movimento
 	previousX: 0,
 	previousY: 0,
@@ -44,10 +49,28 @@ export function drawPlayer(ctx, mouseX, mouseY) {
 	let angle = Math.atan2(mouseY - (player.y + player.size/2), mouseX - (player.x + player.size/2));
 	ctx.rotate(angle);
 	
-	// Piscar se invulnerável
-	if (!player.invulnerable || Math.floor(Date.now() / 100) % 2 === 0) {
+	// Efeitos visuais baseados no estado
+	let shouldDraw = true;
+	
+	// Piscar se invulnerável (mas não se paralisado)
+	if (player.invulnerable && !player.paralyzed) {
+		shouldDraw = Math.floor(Date.now() / 100) % 2 === 0;
+	}
+	
+	// Efeito de paralização (cor azulada)
+	if (player.paralyzed) {
+		ctx.shadowBlur = 15;
+		ctx.shadowColor = '#4169E1'; // Azul Royal
+		ctx.filter = 'hue-rotate(240deg) brightness(0.8)'; // Azulado e escurecido
+	}
+	
+	if (shouldDraw) {
 		ctx.drawImage(player.img, -player.size/2, -player.size/2, player.size, player.size);
 	}
+	
+	// Reset de efeitos
+	ctx.shadowBlur = 0;
+	ctx.filter = 'none';
 	ctx.restore();
 }
 
@@ -62,7 +85,41 @@ export function takeDamage(amount) {
 	player.invulnerableTime = Date.now() + 1000;
 }
 
+// Função para paralisar o player (usado pelo Phantom)
+export function paralyzePlayer(enemy, duration = 2000) {
+	if (player.invulnerable || player.paralyzed) return false;
+	
+	console.log(`Player foi paralisado por ${enemy.type} por ${duration}ms!`);
+	
+	player.paralyzed = true;
+	player.paralyzedTime = Date.now();
+	player.paralyzedDuration = duration;
+	player.paralyzedBy = enemy;
+	
+	// Também ativar invulnerabilidade para evitar dano contínuo
+	player.invulnerable = true;
+	player.invulnerableTime = Date.now() + Math.min(1000, duration);
+	
+	return true;
+}
+
 export function updatePlayer() {
+	// === SISTEMA DE PARALIZAÇÃO ===
+	if (player.paralyzed) {
+		const now = Date.now();
+		if (now - player.paralyzedTime >= player.paralyzedDuration) {
+			// Paralização expirou
+			player.paralyzed = false;
+			player.paralyzedBy = null;
+			console.log('Player não está mais paralisado!');
+		}
+		// Se ainda paralisado, manter posição anterior
+		if (player.paralyzed) {
+			player.x = player.previousX;
+			player.y = player.previousY;
+		}
+	}
+
 	// Calcular velocidade
 	player.velocityX = player.x - player.previousX;
 	player.velocityY = player.y - player.previousY;
