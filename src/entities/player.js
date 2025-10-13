@@ -111,6 +111,7 @@ export function updatePlayer() {
 
 /**
  * Analisa padrões de movimento do player para predição avançada
+ * VERSÃO OTIMIZADA para detecção mais rápida e precisa
  */
 function analyzeMovementPatterns() {
 	const history = player.movementHistory;
@@ -141,13 +142,14 @@ function analyzeMovementPatterns() {
 	patterns.sort((a, b) => b.score - a.score);
 	const dominant = patterns[0];
 	
-	// Atualizar padrão apenas se confiança for alta o suficiente
-	if (dominant.score > 0.4) {
+	// THRESHOLD REDUZIDO para detecção mais rápida
+	// Atualizar padrão com confiança mínima menor para resposta mais rápida
+	if (dominant.score > 0.3) { // Reduzido de 0.4 para 0.3
 		player.movementPattern = dominant.name;
-		player.patternConfidence = dominant.score;
+		player.patternConfidence = Math.min(dominant.score * 1.2, 1.0); // Aumentar confiança em 20%
 	} else {
 		player.movementPattern = 'random';
-		player.patternConfidence = 0;
+		player.patternConfidence = Math.max(dominant.score, 0.3); // Mínimo de 30% mesmo sem padrão claro
 	}
 	
 	// Calcular velocidade média
@@ -160,11 +162,12 @@ function analyzeMovementPatterns() {
 		const angleDiff = Math.abs(recentHistory[i].direction - recentHistory[i-1].direction);
 		// Normalizar para 0-π
 		const normalizedDiff = Math.min(angleDiff, 2 * Math.PI - angleDiff);
-		if (normalizedDiff > Math.PI / 4) { // Mudança de 45+ graus
+		if (normalizedDiff > Math.PI / 6) { // Mudança de 30+ graus (mais sensível)
 			dirChanges++;
 		}
 	}
 	player.directionChanges = dirChanges;
+	player.lastDirectionChange = dirChanges > 0 ? 0 : (player.lastDirectionChange || 0) + 1;
 }
 
 /**
