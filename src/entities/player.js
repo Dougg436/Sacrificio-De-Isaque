@@ -5,7 +5,7 @@ export let player = {
 	size: 50,
 	x: 0, // será inicializado no main.js
 	y: 0,
-	speed: 4,
+	speed: 5,
 	damage: 1,
 	img: null,
 	maxHealth: 6, // 3 corações (cada coração = 2 de vida)
