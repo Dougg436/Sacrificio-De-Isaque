@@ -1,14 +1,470 @@
-import { player, drawPlayer, takeDamage, updatePlayer, canShoot } from './entities/player.js';
+import { player, drawPlayer, takeDamage, updatePlayer, canShoot, paralyzePlayer, grantPhantomLordRewards } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
-import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculatePredictiveAngle } from './entities/enemy.js';
-import { keys, setupKeyboard, mouseX, mouseY, setupMouse } from './core/input.js';
+import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle, countLiveShards, createMiniShardsFromShard, checkBulletBarrierCollision } from './entities/enemy.js';
+import { keys, setupKeyboard, mouseX, mouseY, setupMouse, updateFrame, recordInputSnapshot, getRecentInputSequence, inputHistory } from './core/input.js';
 import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
-import { MIN_FIRE_RATE } from './config.js';
+import { MIN_FIRE_RATE, ENEMY_SPAWN_DELAY } from './config.js';
+import { UltraPrecisionEnsembleAI } from './ai/ultra-precision-ensemble.js';
+import { NeuralNetworkVisualizer } from './utils/neural-visualizer.js';
 
 const canvas = document.getElementById('gameScreen');
 const ctx = canvas.getContext('2d');
+
+// === A IA MAIS ABSURDA DO MUNDO ===
+console.log('🚀 INICIALIZANDO SISTEMA DE IA ULTRA PRECISO...');
+const ultraAI = new UltraPrecisionEnsembleAI();
+
+// === VISUALIZADOR NEURAL ===
+console.log('🎨 INICIALIZANDO VISUALIZADOR NEURAL...');
+const neuralViz = new NeuralNetworkVisualizer({
+    width: 280,
+    height: 280,
+    position: 'top-right'
+});
+
+let aiPredictions = [];
+let lastAIUpdateTime = 0;
+let aiStats = { predictions: 0, accuracy: 0, ultraPrecisionMode: true };
+
+// Performance controls - MODO ULTRA PRECISO ATIVADO
+let AI_ENABLED = true; // SEMPRE ATIVO - performance não importa
+let AI_UPDATE_INTERVAL = 100; // REDUZIDO: Atualizar IA a cada 100ms para máxima precisão
+let AI_TRAINING_INTERVAL = 500; // REDUZIDO: Treinar a cada 500ms para aprendizado contínuo
+let lastAITrainingTime = 0;
+
+// === SISTEMA DE INIMIGO ALVO (para visualização da IA) ===
+let targetEnemy = null; // Inimigo sendo rastreado pelo visualizador neural
+let targetEnemyRotationTime = 0; // Última vez que mudou de alvo
+const TARGET_ENEMY_ROTATION_INTERVAL = 5000; // Mudar de alvo a cada 5 segundos
+
+// Buffer para coleta de dados de treinamento (AUMENTADO PARA MÁXIMA PRECISÃO)
+let trainingBuffer = [];
+let lastPlayerPositions = [];
+let futurePredictionDelay = 10; // AUMENTADO: predições mais distantes para mais precisão
+let aiValidationBuffer = []; // Buffer para validação das predições
+
+// Função para coletar dados de treinamento da IA (MODO ULTRA PRECISO)
+async function collectAITrainingData() {
+	// IA SEMPRE ATIVA - MÁXIMA PRECISÃO
+	if (!AI_ENABLED) return;
+	
+	const currentTime = Date.now();
+	
+	// COLETA CONTÍNUA - sem throttling para máxima precisão
+	// Manter histórico de posições para calcular dados futuros (AUMENTADO)
+	lastPlayerPositions.push({
+		x: player.x,
+		y: player.y,
+		vx: player.velocityX || 0,
+		vy: player.velocityY || 0,
+		timestamp: currentTime,
+		frame: updateFrame.currentFrame || 0,
+		health: player.health,
+		inputs: [...(inputHistory.slice(-3) || [])] // Últimos 3 inputs
+	});
+	
+	// Limitar histórico a 50 frames (AUMENTADO para mais dados)
+	if (lastPlayerPositions.length > 50) {
+		lastPlayerPositions.shift();
+	}
+	
+	// TREINAMENTO CONTÍNUO COM MAIS DADOS
+	if (lastPlayerPositions.length >= futurePredictionDelay + 10 && 
+		inputHistory.length >= 10 && 
+		player.movementHistory.length >= 10) {
+		
+		// Pegar dados do passado para treinamento (MAIS DADOS)
+		const pastIndex = lastPlayerPositions.length - futurePredictionDelay - 1;
+		const pastPosition = lastPlayerPositions[pastIndex];
+		const pastInputs = inputHistory.slice(-10 - futurePredictionDelay, -futurePredictionDelay);
+		const pastMovement = player.movementHistory.slice(-10 - futurePredictionDelay, -futurePredictionDelay);
+		
+		// Dados atuais como "futuro" que a IA deve aprender a prever
+		const currentPosition = { x: player.x, y: player.y };
+		const currentVelocity = { 
+			x: player.velocityX || 0, 
+			y: player.velocityY || 0 
+		};
+		
+		// Estado do player no momento passado (MAIS DETALHADO)
+		const pastPlayerState = {
+			x: pastPosition.x,
+			y: pastPosition.y,
+			vx: pastPosition.vx,
+			vy: pastPosition.vy,
+			averageSpeed: player.averageSpeed || 3,
+			directionChanges: player.directionChanges || 0,
+			patternConfidence: player.patternConfidence || 0.5,
+			health: pastPosition.health,
+			timestamp: pastPosition.timestamp
+		};
+		
+		// ADICIONAR DADOS DE TREINAMENTO SEMPRE (sem throttling)
+		try {
+			// Extrair features usando o novo sistema
+			const features = ultraAI.extractUltraFeatures(pastInputs, pastMovement, pastPlayerState);
+			
+			// Adicionar exemplo de treinamento
+			ultraAI.addTrainingExample(features, currentPosition, futurePredictionDelay / 60); // Converter frames para segundos
+			
+			// Log de progresso
+			if (ultraAI.stats.totalPredictions % 50 === 0) {
+				console.log(`🎯 IA ULTRA PRECISA - Total de exemplos: ${ultraAI.stats.totalPredictions}, Precisão: ${(ultraAI.stats.accuracy * 100).toFixed(2)}%`);
+			}
+			
+		} catch (error) {
+			console.warn('⚠️ Erro no treinamento da IA Ultra Precisa:', error.message);
+		}
+		
+		lastAITrainingTime = currentTime;
+	}
+	
+	// FAZER PREDIÇÕES FREQUENTES para máxima precisão
+	if (currentTime - lastAIUpdateTime > AI_UPDATE_INTERVAL) {
+		await updateUltraPreciseAIPredictions();
+		lastAIUpdateTime = currentTime;
+	}
+}
+
+// Função para atualizar predições da IA ULTRA PRECISA
+async function updateUltraPreciseAIPredictions() {
+	if (!AI_ENABLED || inputHistory.length < 10 || player.movementHistory.length < 10) {
+		return;
+	}
+	
+	// Estado atual do player para predição (ULTRA DETALHADO)
+	const playerState = {
+		x: player.x,
+		y: player.y,
+		vx: player.velocityX || 0,
+		vy: player.velocityY || 0,
+		speed: player.speed || 3,  // VELOCIDADE ATUAL DO JOGADOR (pode mudar com upgrades!)
+		averageSpeed: player.averageSpeed || player.speed || 3,
+		directionChanges: player.directionChanges || 0,
+		patternConfidence: player.patternConfidence || 0.5,
+		health: player.health,
+		timestamp: Date.now()
+	};
+	
+	// MÚLTIPLOS HORIZONTES TEMPORAIS para máxima precisão
+	const timeHorizons = [0.1, 0.25, 0.5, 0.75, 1.0]; // 100ms até 1 segundo
+	
+	try {
+		for (const horizon of timeHorizons) {
+			const prediction = await ultraAI.predictPlayerPosition(
+				inputHistory.slice(-15), // Últimos 15 inputs para máxima precisão
+				player.movementHistory.slice(-15), // Últimos 15 movimentos
+				playerState,
+				horizon
+			);
+			
+			// Adicionar predição apenas se confiança for alta
+			if (prediction.confidence > 0.7) { // Aceitar apenas 70%+ confiança
+				
+				// Armazenar para validação futura
+				aiValidationBuffer.push({
+					prediction: prediction,
+					createdAt: Date.now(),
+					validationTime: Date.now() + (horizon * 1000),
+					playerStateAtPrediction: {...playerState}
+				});
+				
+				aiPredictions.push({
+					position: prediction.position,
+					confidence: prediction.confidence,
+					timeHorizon: horizon,
+					createdAt: Date.now(),
+					validationTime: Date.now() + (horizon * 1000),
+					networkPredictions: prediction.networkPredictions,
+					processingTime: prediction.processingTime,
+					metadata: prediction.metadata
+				});
+			}
+		}
+		
+		// Log de performance da IA
+		if (aiPredictions.length > 0) {
+			const avgConfidence = aiPredictions.reduce((sum, p) => sum + p.confidence, 0) / aiPredictions.length;
+			const activeSystems = aiPredictions[0]?.metadata?.activeSystems || 0;
+			
+			console.log(`🧠 IA ULTRA PRECISA - Predições: ${aiPredictions.length}, Confiança média: ${(avgConfidence * 100).toFixed(1)}%, Sistemas ativos: ${activeSystems}`);
+			
+			// === ATUALIZAR VISUALIZADOR NEURAL ===
+			try {
+				const neuralData = ultraAI.exportNeuralVisualizationData();
+				neuralViz.updateOverlay(neuralData, avgConfidence);
+			} catch (vizError) {
+				console.warn('⚠️ Erro ao atualizar visualizador neural:', vizError);
+			}
+		}
+		
+	} catch (error) {
+		console.error('❌ ERRO CRÍTICO na IA Ultra Precisa:', error);
+		// Não desabilitar - tentar novamente na próxima iteração
+	}
+	
+	// VALIDAR PREDIÇÕES ANTERIORES para calcular precisão
+	await validateUltraPrecisePredictions();
+	
+	// Limitar número de predições ativas (mas manter mais para precisão)
+	if (aiPredictions.length > 20) {
+		aiPredictions = aiPredictions.slice(-15); // Manter as 15 mais recentes
+	}
+	
+	// Limitar buffer de validação
+	if (aiValidationBuffer.length > 100) {
+		aiValidationBuffer = aiValidationBuffer.slice(-80); // Manter os 80 mais recentes
+	}
+}
+
+// Função para validar predições e melhorar a IA continuamente
+async function validateUltraPrecisePredictions() {
+	if (!AI_ENABLED || aiValidationBuffer.length === 0) return;
+	
+	const currentTime = Date.now();
+	let validatedCount = 0;
+	const currentPosition = { x: player.x, y: player.y };
+	
+	// Validar TODAS as predições que chegaram no tempo
+	for (let i = aiValidationBuffer.length - 1; i >= 0; i--) {
+		const predictionData = aiValidationBuffer[i];
+		
+		if (currentTime >= predictionData.validationTime) {
+			// Calcular erro da predição
+			const error = Math.sqrt(
+				Math.pow(predictionData.prediction.position.x - currentPosition.x, 2) +
+				Math.pow(predictionData.prediction.position.y - currentPosition.y, 2)
+			);
+			
+			// Tolerância baseada no horizonte temporal (mais tolerância para predições mais distantes)
+			const tolerance = 20 + (predictionData.prediction.timeHorizon * 30);
+			
+			// Validar com a IA Ultra Precisa
+			const validation = ultraAI.validatePrediction(
+				predictionData.prediction.position,
+				currentPosition,
+				tolerance
+			);
+			
+			// Atualizar estatísticas globais
+			aiStats.predictions = ultraAI.stats.totalPredictions;
+			aiStats.accuracy = ultraAI.stats.accuracy;
+			
+			// Remover predição validada
+			aiValidationBuffer.splice(i, 1);
+			validatedCount++;
+			
+			// Log detalhado para casos de baixa precisão
+			if (!validation.isCorrect && predictionData.prediction.confidence > 0.8) {
+				console.warn(`⚠️ Predição falhou: erro=${error.toFixed(1)}px, confiança=${(predictionData.prediction.confidence * 100).toFixed(1)}%, horizonte=${predictionData.prediction.timeHorizon}s`);
+			}
+		}
+	}
+	
+	// Log de progresso a cada validação
+	if (validatedCount > 0) {
+		console.log(`✅ Validadas ${validatedCount} predições. Precisão atual: ${(aiStats.accuracy * 100).toFixed(2)}%`);
+		
+		// Se a precisão estiver baixa, ajustar parâmetros
+		if (aiStats.accuracy < 0.8 && ultraAI.stats.totalPredictions > 50) {
+			console.log('🔧 Precisão baixa detectada. Iniciando auto-otimização...');
+			await ultraAI.continuousOptimization();
+		}
+	}
+}
+
+// Função para obter melhor predição para um inimigo (ULTRA PRECISA)
+function getBestUltraPreciseAIPrediction(enemy, bulletSpeed) {
+	if (aiPredictions.length === 0) {
+		return null;
+	}
+	
+	// Calcular tempo aproximado para bala atingir o player
+	const dx = (player.x + player.size/2) - (enemy.x + enemy.size/2);
+	const dy = (player.y + player.size/2) - (enemy.y + enemy.size/2);
+	const distance = Math.sqrt(dx*dx + dy*dy);
+	const approxTime = distance / bulletSpeed;
+	
+	// Encontrar MÚLTIPLAS predições e usar ensemble
+	const candidatePredictions = aiPredictions.filter(prediction => {
+		const timeDiff = Math.abs(prediction.timeHorizon - approxTime);
+		return timeDiff < 0.3 && prediction.confidence > 0.75; // Apenas predições muito confiáveis
+	});
+	
+	if (candidatePredictions.length === 0) {
+		// Fallback: usar predição com maior confiança
+		const bestPrediction = aiPredictions.reduce((best, current) => 
+			current.confidence > best.confidence ? current : best
+		);
+		return bestPrediction.confidence > 0.6 ? bestPrediction : null;
+	}
+	
+	// ENSEMBLE: combinar múltiplas predições usando pesos de confiança
+	let totalWeight = 0;
+	let weightedX = 0;
+	let weightedY = 0;
+	let maxConfidence = 0;
+	
+	candidatePredictions.forEach(prediction => {
+		const timeWeight = 1 - Math.abs(prediction.timeHorizon - approxTime) / 0.3; // Peso baseado na proximidade temporal
+		const confidenceWeight = Math.pow(prediction.confidence, 2); // Peso quadrático para alta confiança
+		const finalWeight = timeWeight * confidenceWeight;
+		
+		weightedX += prediction.position.x * finalWeight;
+		weightedY += prediction.position.y * finalWeight;
+		totalWeight += finalWeight;
+		maxConfidence = Math.max(maxConfidence, prediction.confidence);
+	});
+	
+	if (totalWeight === 0) return null;
+	
+	return {
+		position: {
+			x: weightedX / totalWeight,
+			y: weightedY / totalWeight
+		},
+		confidence: maxConfidence,
+		timeHorizon: approxTime,
+		ensembleSize: candidatePredictions.length,
+		isEnsemble: candidatePredictions.length > 1
+	};
+}
+
+// Função para desenhar visualização da IA ULTRA PRECISA
+function drawUltraPreciseAIVisualization() {
+	if (!keys['i']) return; // Apenas mostrar se tecla I estiver pressionada
+	
+	// Desenhar predições da IA com cores ultra detalhadas
+	aiPredictions.forEach((prediction, index) => {
+		const alpha = Math.max(0.2, prediction.confidence);
+		const timeRatio = prediction.timeHorizon / 1.0; // Normalizar para 1s max
+		
+		// Cores baseadas na confiança e sistemas ativos
+		let red = 255;
+		let green = 0;
+		let blue = 0;
+		
+		if (prediction.confidence > 0.9) {
+			// Verde para alta confiança (90%+)
+			red = 0; green = 255; blue = 0;
+		} else if (prediction.confidence > 0.8) {
+			// Amarelo para boa confiança (80-90%)
+			red = 255; green = 255; blue = 0;
+		} else if (prediction.confidence > 0.7) {
+			// Laranja para confiança média (70-80%)
+			red = 255; green = 165; blue = 0;
+		}
+		
+		// Círculo da predição com tamanho baseado na confiança
+		const radius = 5 + (prediction.confidence * 15); // 5-20px baseado na confiança
+		ctx.fillStyle = `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+		ctx.beginPath();
+		ctx.arc(prediction.position.x, prediction.position.y, radius, 0, Math.PI * 2);
+		ctx.fill();
+		
+		// Borda mais espessa para predições ensemble
+		if (prediction.ensembleSize > 1) {
+			ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+			ctx.lineWidth = 3;
+			ctx.stroke();
+		}
+		
+		// Linha da posição atual para predição
+		ctx.strokeStyle = `rgba(${red}, ${green}, ${blue}, ${alpha * 0.6})`;
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(player.x + player.size/2, player.y + player.size/2);
+		ctx.lineTo(prediction.position.x, prediction.position.y);
+		ctx.stroke();
+		
+		// Texto de informação detalhada
+		if (prediction.confidence > 0.8) {
+			ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+			ctx.font = '10px Arial';
+			ctx.textAlign = 'center';
+			ctx.fillText(
+				`${(prediction.confidence * 100).toFixed(0)}%`, 
+				prediction.position.x, 
+				prediction.position.y - radius - 5
+			);
+			
+			// Mostrar tempo de horizonte
+			ctx.fillText(
+				`${(prediction.timeHorizon * 1000).toFixed(0)}ms`, 
+				prediction.position.x, 
+				prediction.position.y + radius + 15
+			);
+		}
+	});
+	
+	// Painel de estatísticas da IA ULTRA DETALHADO
+	const panelWidth = 350;
+	const panelHeight = 280;
+	ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+	ctx.fillRect(10, 200, panelWidth, panelHeight);
+	
+	ctx.fillStyle = '#fff';
+	ctx.font = 'bold 16px Arial';
+	ctx.textAlign = 'left';
+	ctx.fillText('IA ULTRA PRECISA - ESTATÍSTICAS', 15, 220);
+	
+	ctx.font = '14px Arial';
+	let yOffset = 240;
+	
+	// Estatísticas principais
+	const detailedStats = ultraAI.getDetailedStats();
+	ctx.fillText(`Total de Predições: ${detailedStats.totalPredictions}`, 15, yOffset);
+	yOffset += 18;
+	
+	ctx.fillStyle = detailedStats.accuracy > 0.9 ? '#0f0' : detailedStats.accuracy > 0.8 ? '#ff0' : '#f80';
+	ctx.fillText(`Precisão: ${(detailedStats.accuracy * 100).toFixed(2)}%`, 15, yOffset);
+	yOffset += 18;
+	
+	ctx.fillStyle = '#fff';
+	ctx.fillText(`Predições Ativas: ${aiPredictions.length}`, 15, yOffset);
+	yOffset += 18;
+	
+	ctx.fillText(`Validações Pendentes: ${aiValidationBuffer.length}`, 15, yOffset);
+	yOffset += 18;
+	
+	// Estatísticas de memória
+	if (detailedStats.memoryUsage) {
+		ctx.fillText(`KNN Data Points: ${detailedStats.memoryUsage.knnDataPoints}`, 15, yOffset);
+		yOffset += 18;
+		
+		ctx.fillText(`Redes Neurais: ${detailedStats.memoryUsage.neuralNetworkSize}`, 15, yOffset);
+		yOffset += 18;
+	}
+	
+	// Performance
+	if (detailedStats.performance && detailedStats.performance.averageProcessingTime > 0) {
+		ctx.fillText(`Tempo Médio: ${detailedStats.performance.averageProcessingTime.toFixed(1)}ms`, 15, yOffset);
+		yOffset += 18;
+	}
+	
+	// Pesos dos sistemas (apenas os principais)
+	ctx.font = '12px Arial';
+	ctx.fillStyle = '#aaa';
+	ctx.fillText('Pesos dos Sistemas:', 15, yOffset);
+	yOffset += 15;
+	
+	const mainWeights = ['ultraDeep', 'lstm', 'conv', 'attention', 'transformer'];
+	mainWeights.forEach(system => {
+		if (detailedStats.predictionWeights[system]) {
+			ctx.fillText(`${system}: ${(detailedStats.predictionWeights[system] * 100).toFixed(1)}%`, 20, yOffset);
+			yOffset += 12;
+		}
+	});
+	
+	// Mostrar padrão atual
+	if (player.movementPattern && player.patternConfidence > 0.3) {
+		ctx.fillStyle = player.patternConfidence > 0.7 ? '#0f0' : '#ff0';
+		ctx.font = '14px Arial';
+		ctx.fillText(`Padrão: ${player.movementPattern.toUpperCase()} (${(player.patternConfidence * 100).toFixed(0)}%)`, 15, yOffset + 10);
+	}
+}
 
 // Gerar dungeon
 const dungeon = generateDungeon({
@@ -61,26 +517,40 @@ function saveRoomState() {
 	}
 	
 	// Salvar cópia profunda dos inimigos (posição, vida, tipo, etc)
-	currentRoom.savedState.enemies = enemies.map(enemy => ({
-		x: enemy.x,
-		y: enemy.y,
-		type: enemy.type,
-		size: enemy.size,
-		health: enemy.health,
-		maxHealth: enemy.maxHealth,
-		speed: enemy.speed,
-		damage: enemy.damage,
-		color: enemy.color,
-		behavior: enemy.behavior,
-		shootInterval: enemy.shootInterval,
-		lastShotTime: enemy.lastShotTime,
-		vx: enemy.vx,
-		vy: enemy.vy,
-		wanderTimer: enemy.wanderTimer,
-		dead: enemy.dead,
-		spawnTime: enemy.spawnTime,
-		canAttack: enemy.canAttack
-	}));
+	currentRoom.savedState.enemies = enemies.map(enemy => {
+		const savedEnemy = {
+			x: enemy.x,
+			y: enemy.y,
+			type: enemy.type,
+			size: enemy.size,
+			health: enemy.health,
+			maxHealth: enemy.maxHealth,
+			speed: enemy.speed,
+			damage: enemy.damage,
+			color: enemy.color,
+			behavior: enemy.behavior,
+			shootInterval: enemy.shootInterval,
+			lastShotTime: enemy.lastShotTime,
+			vx: enemy.vx,
+			vy: enemy.vy,
+			wanderTimer: enemy.wanderTimer,
+			dead: enemy.dead,
+			spawnTime: enemy.spawnTime,
+			canAttack: enemy.canAttack
+		};
+		
+		// Adicionar propriedades específicas do phantom
+		if (enemy.type === 'phantom') {
+			savedEnemy.isVisible = enemy.isVisible;
+			savedEnemy.invisibilityDuration = enemy.invisibilityDuration;
+			savedEnemy.invisibilityStartTime = enemy.invisibilityStartTime;
+			savedEnemy.repositionOnInvisible = enemy.repositionOnInvisible;
+			savedEnemy.repositionTimer = enemy.repositionTimer;
+			savedEnemy.originalColor = enemy.originalColor;
+		}
+		
+		return savedEnemy;
+	});
 	
 	// Salvar bullets (opcional, mas pode ser útil)
 	currentRoom.savedState.bullets = bullets.map(bullet => ({
@@ -115,9 +585,68 @@ function loadRoomState() {
 	// Se a sala tem estado salvo, restaurar
 	if (currentRoom.savedState) {
 		// Restaurar inimigos com todas as propriedades
-		enemies = currentRoom.savedState.enemies.map(savedEnemy => ({
-			...savedEnemy
-		}));
+		enemies = currentRoom.savedState.enemies.map(savedEnemy => {
+			const enemy = {...savedEnemy};
+			
+			// === CORREÇÃO CRÍTICA PARA TIROS ===
+			// Garantir que timestamps sejam válidos
+			const currentTime = Date.now();
+			
+			// Se o timestamp salvo for muito antigo ou inválido, corrigir
+			if (!enemy.lastShotTime || 
+				enemy.lastShotTime < currentTime - 10000 || // Mais de 10 segundos atrás
+				enemy.lastShotTime > currentTime) { // Timestamp no futuro (inválido)
+				enemy.lastShotTime = currentTime - (enemy.shootInterval || 2000); // Permitir atirar imediatamente
+			}
+			
+			// Garantir que spawnTime seja válido
+			if (!enemy.spawnTime || 
+				enemy.spawnTime < currentTime - 10000 ||
+				enemy.spawnTime > currentTime) {
+				enemy.spawnTime = currentTime - (ENEMY_SPAWN_DELAY || 2000); // Permitir atacar imediatamente
+			}
+			
+			// Garantir que canAttack esteja correto
+			if (currentTime - enemy.spawnTime >= (ENEMY_SPAWN_DELAY || 2000)) {
+				enemy.canAttack = true;
+			}
+			
+			// Garantir que propriedades essenciais existam
+			if (!enemy.shootInterval) {
+				enemy.shootInterval = 2000; // Default
+			}
+			if (!enemy.aimAccuracy) {
+				enemy.aimAccuracy = 0.95; // Default alta precisão
+			}
+			if (enemy.vx === undefined) enemy.vx = 0;
+			if (enemy.vy === undefined) enemy.vy = 0;
+			if (enemy.wanderTimer === undefined) enemy.wanderTimer = 0;
+			
+			// Restaurar propriedades específicas do phantom
+			if (enemy.type === 'phantom') {
+				// Garantir que propriedades do phantom existam
+				if (enemy.isVisible === undefined) enemy.isVisible = true;
+				if (!enemy.invisibilityDuration) enemy.invisibilityDuration = 4000;
+				if (!enemy.invisibilityStartTime) enemy.invisibilityStartTime = 0;
+				if (enemy.repositionOnInvisible === undefined) enemy.repositionOnInvisible = true;
+				if (!enemy.repositionTimer) enemy.repositionTimer = 0;
+				if (!enemy.originalColor) enemy.originalColor = enemy.color;
+				
+				// Validar estado de invisibilidade
+				if (!enemy.isVisible && enemy.invisibilityStartTime > 0) {
+					// Verificar se invisibilidade já deveria ter acabado
+					if (currentTime - enemy.invisibilityStartTime >= enemy.invisibilityDuration) {
+						enemy.isVisible = true;
+						enemy.invisibilityStartTime = 0;
+						console.log(`Phantom restaurado como visível (invisibilidade expirada)`);
+					}
+				}
+			}
+			
+			console.log(`Restored enemy ${enemy.type}: canAttack=${enemy.canAttack}, lastShot=${currentTime - enemy.lastShotTime}ms ago${enemy.type === 'phantom' ? `, visible=${enemy.isVisible}` : ''}`);
+			
+			return enemy;
+		});
 		
 		// Restaurar bullets
 		bullets = currentRoom.savedState.bullets.map(savedBullet => ({
@@ -129,10 +658,65 @@ function loadRoomState() {
 			...savedPowerup
 		}));
 		
+		// === VERIFICAR LIMITE DE PHANTOMS EM ESTADOS SALVOS ===
+		const phantomCount = countLivePhantoms();
+		if (phantomCount > 2) {
+			console.warn(`Sala salva tinha ${phantomCount} Phantoms. Aplicando limite de 2...`);
+			// Converter Phantoms excedentes para outros tipos
+			let phantomsConverted = 0;
+			const nonPhantomTypes = ['fly', 'spider', 'shooter'];
+			
+			for (let i = 0; i < enemies.length && phantomsConverted < (phantomCount - 2); i++) {
+				if (enemies[i].type === 'phantom' && !enemies[i].dead) {
+					const newType = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
+					console.log(`Converting excess Phantom to ${newType}`);
+					
+					// Manter posição e vida, mas mudar tipo e propriedades
+					const originalEnemy = enemies[i];
+					enemies[i] = createEnemy(originalEnemy.x, originalEnemy.y, newType);
+					enemies[i].health = originalEnemy.health;
+					enemies[i].canAttack = originalEnemy.canAttack;
+					enemies[i].spawnTime = originalEnemy.spawnTime;
+					
+					phantomsConverted++;
+				}
+			}
+		}
+		
+		console.log(`Loaded room state: ${enemies.length} enemies (${countLivePhantoms()} phantoms), ${bullets.length} bullets, ${powerUps.length} powerups`);
 		return true; // Estado foi carregado
 	}
 	
 	return false; // Sem estado salvo, precisa gerar novo
+}
+
+// Função para contar Phantoms vivos na sala atual
+function countLivePhantoms() {
+	return enemies.filter(enemy => enemy.type === 'phantom' && !enemy.dead).length;
+}
+
+// Função de debug para forçar spawn de Phantoms (apenas para teste)
+function debugSpawnPhantoms() {
+	console.log('DEBUG: Tentando spawnar 5 Phantoms para testar limite...');
+	const testTypes = ['phantom', 'phantom', 'phantom', 'phantom', 'phantom'];
+	
+	for (let i = 0; i < testTypes.length; i++) {
+		const x = Math.random() * (roomWidth - 200) + 100;
+		const y = Math.random() * (roomHeight - 200) + 100;
+		let type = testTypes[i];
+		
+		// Aplicar mesma lógica de limitação
+		if (type === 'phantom' && countLivePhantoms() >= 2) {
+			const nonPhantomTypes = ['fly', 'spider', 'shooter'];
+			type = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
+			console.log(`DEBUG: Phantom ${i+1} blocked - limit reached. Spawning ${type} instead.`);
+		}
+		
+		enemies.push(createEnemy(x, y, type));
+	}
+	
+	const finalPhantomCount = countLivePhantoms();
+	console.log(`DEBUG: Resultado final: ${finalPhantomCount} Phantoms spawrados (máximo esperado: 2)`);
 }
 
 // Spawn inimigos da sala atual (apenas primeira visita)
@@ -154,14 +738,49 @@ function spawnRoomEnemies() {
 	// Spawnar inimigos baseado na sala atual
 	if (currentRoom.type !== 'start' && currentRoom.type !== 'treasure') {
 		const enemyCount = currentRoom.type === 'boss' ? 0 : Math.floor(Math.random() * 4) + 4; // 4-7 inimigos
-		const enemyTypes = ['fly', 'spider', 'shooter'];
+		
+		// === SISTEMA DE ANDARES: PHANTOMS vs SHARDS vs RED PHANTOM CORE ===
+		let enemyTypes;
+		if (currentFloor >= 3) {
+			// Basement 3+: Phantoms e Shards combinados (preparação para Red Phantom Core)
+			enemyTypes = ['phantom', 'shard'];
+		} else if (currentFloor >= 2) {
+			// Basement 2: Apenas Shards (sem Phantoms)
+			enemyTypes = ['fly', 'spider', 'shooter', 'shard'];
+		} else {
+			// Basement 1: Sistema original com Phantoms
+			enemyTypes = ['fly', 'spider', 'shooter', 'phantom'];
+		}
 		
 		for (let i = 0; i < enemyCount; i++) {
 			const x = Math.random() * (roomWidth - 200) + 100;
 			const y = Math.random() * (roomHeight - 200) + 100;
-			const type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+			let type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
+			
+			if (currentFloor >= 2) {
+				// === LIMITAÇÃO DE SHARDS: MÁXIMO 3 POR SALA ===
+				if (type === 'shard' && countLiveShards(enemies) >= 3) {
+					// Se já tem 3 ou mais Shards, escolher outro tipo aleatório
+					const nonShardTypes = ['fly', 'spider', 'shooter'];
+					type = nonShardTypes[Math.floor(Math.random() * nonShardTypes.length)];
+					console.log('Shard spawn blocked - limit reached (3/3). Spawning', type, 'instead.');
+				}
+			} else {
+				// === LIMITAÇÃO DE PHANTOMS: MÁXIMO 2 POR SALA ===
+				if (type === 'phantom' && countLivePhantoms() >= 2) {
+					// Se já tem 2 ou mais Phantoms, escolher outro tipo aleatório
+					const nonPhantomTypes = ['fly', 'spider', 'shooter'];
+					type = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
+					console.log('Phantom spawn blocked - limit reached (2/2). Spawning', type, 'instead.');
+				}
+			}
+			
 			enemies.push(createEnemy(x, y, type));
 		}
+		
+		// Log de spawn para monitoramento
+		const phantomCount = countLivePhantoms();
+		console.log(`Spawned ${enemyCount} enemies in room (${phantomCount} phantoms, limit: 2)`);
 	}
 	
 	// Spawnar powerups APENAS em salas de tesouro E apenas se ainda não foi coletado
@@ -588,8 +1207,8 @@ function drawRoom() {
 		}
 	}
 	
-	// Desenhar trapdoor se boss foi derrotado e estamos na sala do boss
-	if (bossDefeated && currentRoom.type === 'boss') {
+	// Desenhar trapdoor se Phantom Lord foi derrotado
+	if (trapdoorSpawned) {
 		const trapdoorSize = 60;
 		const trapdoorX = roomWidth / 2 - trapdoorSize / 2;
 		const trapdoorY = roomHeight / 2 - trapdoorSize / 2;
@@ -725,6 +1344,52 @@ function drawHealth() {
 	const shotsPerSecond = (1000 / player.fireRate).toFixed(1);
 	ctx.strokeText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
 	ctx.fillText(`🔫 Fire Rate: ${shotsPerSecond}/s`, statsX, statsY + 40);
+	
+	// Estado de paralização
+	if (player.paralyzed) {
+		const timeLeft = Math.max(0, player.paralyzedDuration - (Date.now() - player.paralyzedTime));
+		const secondsLeft = (timeLeft / 1000).toFixed(1);
+		
+		ctx.fillStyle = '#4169E1';
+		ctx.strokeText(`🚫 PARALISADO: ${secondsLeft}s`, statsX, statsY + 60);
+		ctx.fillText(`🚫 PARALISADO: ${secondsLeft}s`, statsX, statsY + 60);
+	}
+	
+	// Indicadores de recompensas do Phantom Lord
+	if (player.phantomImmunity || player.doubleAttack) {
+		let rewardY = statsY + (player.paralyzed ? 80 : 60);
+		
+		if (player.phantomImmunity) {
+			ctx.fillStyle = '#9932CC';
+			ctx.strokeText(`🛡️ PHANTOM IMMUNITY`, statsX, rewardY);
+			ctx.fillText(`🛡️ PHANTOM IMMUNITY`, statsX, rewardY);
+			rewardY += 20;
+		}
+		
+		if (player.doubleAttack) {
+			ctx.fillStyle = '#FFD700';
+			ctx.strokeText(`⚔️ DOUBLE ATTACK`, statsX, rewardY);
+			ctx.fillText(`⚔️ DOUBLE ATTACK`, statsX, rewardY);
+		}
+	}
+	
+	if (!player.paralyzed) {
+		// Padrão de movimento detectado (DEBUG - pode ser removido)
+		if (player.movementPattern && player.patternConfidence > 0.3) {
+			const patternIcons = {
+				circular: '🔄',
+				zigzag: '⚡',
+				strafe: '↔️',
+				straight: '➡️',
+				random: '❓'
+			};
+			const icon = patternIcons[player.movementPattern] || '❓';
+			const confidence = (player.patternConfidence * 100).toFixed(0);
+			ctx.fillStyle = player.patternConfidence > 0.6 ? '#ff0' : '#aaa';
+			ctx.strokeText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
+			ctx.fillText(`${icon} ${player.movementPattern.toUpperCase()} (${confidence}%)`, statsX, statsY + 60);
+		}
+	}
 }
 
 function drawHeart(ctx, x, y, size, full) {
@@ -830,16 +1495,40 @@ function goToNextFloor() {
 	player.previousY = player.y;
 	player.velocityX = 0;
 	player.velocityY = 0;
+	player.previousVelocityX = 0;
+	player.previousVelocityY = 0;
+	player.accelerationX = 0;
+	player.accelerationY = 0;
+	player.movementHistory = []; // Limpar histórico
+	player.movementPattern = 'random';
+	player.patternConfidence = 0;
 	
 	// Spawnar conteúdo da nova sala
 	spawnRoomEnemies();
 }
 
-function update() {
+async function update() {
+	// Atualizar frame counter para sistema de input
+	updateFrame();
+	
+	// Coletar dados para treinamento da IA ULTRA PRECISA
+	await collectAITrainingData();
+	
 	// Calcular deltaTime
 	const currentTime = Date.now();
 	deltaTime = (currentTime - lastFrameTime) / 1000; // Converter para segundos
 	lastFrameTime = currentTime;
+	
+	// Selecionar inimigo alvo para visualização (rotaciona a cada 5 segundos)
+	if (enemies.length > 0) {
+		if (!targetEnemy || !enemies.includes(targetEnemy) || (Date.now() - targetEnemyRotationTime) > TARGET_ENEMY_ROTATION_INTERVAL) {
+			// Escolher inimigo aleatório
+			targetEnemy = enemies[Math.floor(Math.random() * enemies.length)];
+			targetEnemyRotationTime = Date.now();
+		}
+	} else {
+		targetEnemy = null;
+	}
 	
 	// Limitar deltaTime para evitar saltos grandes (ex: quando tab fica inativa)
 	if (deltaTime > 0.1) deltaTime = 0.1;
@@ -944,11 +1633,13 @@ function update() {
 	// Atualizar player (invulnerabilidade, etc)
 	updatePlayer();
 	
-	// Movimento
-	if (keys['w']) player.y -= player.speed;
-	if (keys['s']) player.y += player.speed;
-	if (keys['a']) player.x -= player.speed;
-	if (keys['d']) player.x += player.speed;
+	// Movimento (apenas se não estiver paralisado)
+	if (!player.paralyzed) {
+		if (keys['w']) player.y -= player.speed;
+		if (keys['s']) player.y += player.speed;
+		if (keys['a']) player.x -= player.speed;
+		if (keys['d']) player.x += player.speed;
+	}
 
 	// Verificar colisões com paredes (deve vir antes das transições)
 	checkWallCollisions();
@@ -959,6 +1650,16 @@ function update() {
 			bossDefeated = true;
 			trapdoorSpawned = true;
 		}
+	}
+	
+	// Debug: pressionar T para testar limite de Phantoms
+	if (keys['t'] || keys['T']) {
+		if (!keys['phantomTestPressed']) {
+			keys['phantomTestPressed'] = true;
+			debugSpawnPhantoms();
+		}
+	} else {
+		keys['phantomTestPressed'] = false;
 	}
 
 	// Verificar transições de sala
@@ -972,60 +1673,361 @@ function update() {
 	// Atualizar e desenhar inimigos
 	enemies.forEach((enemy, index) => {
 		if (enemy.dead) {
-			// Remover inimigo morto após um tempo
+			// === DIVISÃO DE SHARDS ===
+			if (enemy.shouldDivide && enemy.type === 'shard') {
+				// Criar Mini Shards apenas se não exceder o limite total
+				const currentShardCount = countLiveShards(enemies);
+				if (currentShardCount + 2 <= 3) { // +2 porque vai criar 2 Mini Shards
+					const miniShards = createMiniShardsFromShard(enemy);
+					enemies.push(...miniShards);
+					console.log(`💎 Shard dividiu! Shards atuais: ${currentShardCount + 2}/3`);
+				} else {
+					console.log('💎 Divisão bloqueada - limite de Shards atingido (3/3)');
+				}
+			}
+			
+			// Remover inimigo morto
 			enemies.splice(index, 1);
 			return;
 		}
 		
 		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
-		drawEnemy(ctx, enemy);
 		
-		// Inimigo atira no player com mira preditiva
-		if (updateResult && updateResult.shouldShoot) {
-			const bulletSpeed = 6;
+		// === INVOCAÇÃO DE SHARDS PELO CRYSTAL CORE ===
+		if (enemy.type === 'crystalcore' && enemy.shouldSummonShards) {
+			enemy.shouldSummonShards = false; // Reset flag
 			
-			// Calcular ângulo preditivo baseado na velocidade do player
-			const predictiveAngle = calculatePredictiveAngle(
-				enemy.x + enemy.size/2,  // posição X do inimigo
-				enemy.y + enemy.size/2,  // posição Y do inimigo
-				updateResult.playerX,    // posição X do player
-				updateResult.playerY,    // posição Y do player
-				updateResult.playerVelocityX, // velocidade X do player
-				updateResult.playerVelocityY, // velocidade Y do player
-				bulletSpeed              // velocidade do projétil
-			);
+			// Verificar quantos Shards existem na sala
+			const currentShardCount = countLiveShards(enemies);
+			const maxShards = 2; // Crystal Core pode ter até 2 Shards ao mesmo tempo
+			const shardsToCreate = Math.min(2, maxShards - currentShardCount);
 			
-			// Calcular ângulo direto (sem predição)
-			const directAngle = Math.atan2(updateResult.dy, updateResult.dx);
-			
-			// Interpolar entre ângulo direto e preditivo baseado na precisão do inimigo
-			// aimAccuracy = 0.0 -> usa apenas ângulo direto (sem predição)
-			// aimAccuracy = 1.0 -> usa apenas ângulo preditivo (predição perfeita)
-			const accuracy = updateResult.aimAccuracy || 0.5;
-			
-			// Interpolar os ângulos (considerando que ângulos podem cruzar 0/2π)
-			let angleDiff = predictiveAngle - directAngle;
-			// Normalizar diferença de ângulo para -π a π
-			while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
-			while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
-			
-			const finalAngle = directAngle + angleDiff * accuracy;
-			
-			const bullet = createBullet(
-				enemy.x + enemy.size/2,
-				enemy.y + enemy.size/2,
-				finalAngle,
-				bulletSpeed, // velocidade do tiro do inimigo
-				20, // tamanho menor para tiros de inimigos
-				enemy.damage,
-				true // marcar como tiro de inimigo
-			);
-			bullets.push(bullet);
+			if (shardsToCreate > 0) {
+				for (let i = 0; i < shardsToCreate; i++) {
+					// Posição aleatória próxima ao Crystal Core
+					const angle = Math.random() * Math.PI * 2;
+					const distance = 80 + Math.random() * 40; // 80-120px de distância
+					const shardX = enemy.x + Math.cos(angle) * distance;
+					const shardY = enemy.y + Math.sin(angle) * distance;
+					
+					// Garantir que está dentro da sala
+					const clampedX = Math.max(20, Math.min(roomWidth - 20 - 32, shardX));
+					const clampedY = Math.max(20, Math.min(roomHeight - 20 - 32, shardY));
+					
+					const newShard = createEnemy(clampedX, clampedY, 'shard');
+					newShard.canAttack = true; // Pode atacar imediatamente
+					enemies.push(newShard);
+				}
+				console.log(`Crystal Core invocou ${shardsToCreate} Shard(s)! Total na sala: ${currentShardCount + shardsToCreate}`);
+			} else {
+				console.log('Crystal Core tentou invocar Shards, mas já há o máximo (2) na sala');
+			}
 		}
 		
-		// Verificar colisão com player
-		if (checkEnemyCollision(enemy, player)) {
-			takeDamage(enemy.damage);
+		// === INVOCAÇÃO DE REFORÇOS PELO RED PHANTOM CORE ===
+		if (enemy.type === 'redphantomcore' && enemy.shouldSummonReinforcements) {
+			enemy.shouldSummonReinforcements = false; // Reset flag
+			
+			// Contar inimigos existentes
+			const currentPhantoms = enemies.filter(e => e.type === 'phantom' && !e.dead).length;
+			const currentShards = countLiveShards(enemies);
+			
+			const phantomsToCreate = Math.min(enemy.maxPhantoms - currentPhantoms, 2);
+			const shardsToCreate = Math.min(enemy.maxShards - currentShards, 2);
+			
+			// Invocar Phantoms
+			for (let i = 0; i < phantomsToCreate; i++) {
+				const angle = Math.random() * Math.PI * 2;
+				const distance = 150 + Math.random() * 100; // 150-250px de distância
+				const phantomX = enemy.x + Math.cos(angle) * distance;
+				const phantomY = enemy.y + Math.sin(angle) * distance;
+				
+				// Garantir que está dentro da sala
+				const clampedX = Math.max(20, Math.min(roomWidth - 20 - 32, phantomX));
+				const clampedY = Math.max(20, Math.min(roomHeight - 20 - 32, phantomY));
+				
+				const newPhantom = createEnemy(clampedX, clampedY, 'phantom');
+				newPhantom.canAttack = true; // Pode atacar imediatamente
+				enemies.push(newPhantom);
+			}
+			
+			// Invocar Shards
+			for (let i = 0; i < shardsToCreate; i++) {
+				const angle = Math.random() * Math.PI * 2;
+				const distance = 120 + Math.random() * 80; // 120-200px de distância
+				const shardX = enemy.x + Math.cos(angle) * distance;
+				const shardY = enemy.y + Math.sin(angle) * distance;
+				
+				// Garantir que está dentro da sala
+				const clampedX = Math.max(20, Math.min(roomWidth - 20 - 32, shardX));
+				const clampedY = Math.max(20, Math.min(roomHeight - 20 - 32, shardY));
+				
+				const newShard = createEnemy(clampedX, clampedY, 'shard');
+				newShard.canAttack = true; // Pode atacar imediatamente
+				enemies.push(newShard);
+			}
+			
+			const totalSummoned = phantomsToCreate + shardsToCreate;
+			if (totalSummoned > 0) {
+				console.log(`Red Phantom Core invocou ${phantomsToCreate} Phantom(s) e ${shardsToCreate} Shard(s)! Total: ${totalSummoned} reforços`);
+			} else {
+				console.log('Red Phantom Core tentou invocar reforços, mas limites já atingidos (2 Phantoms, 2 Shards)');
+			}
+		}
+		
+		// Desenhar aura roxa ao redor do inimigo rastreado pela IA
+		if (enemy === targetEnemy) {
+			ctx.save();
+			ctx.strokeStyle = '#9d4edd'; // Roxo vibrante
+			ctx.shadowBlur = 20;
+			ctx.shadowColor = '#9d4edd';
+			ctx.lineWidth = 3;
+			
+			// Desenhar círculo pulsante ao redor do inimigo
+			const pulse = Math.sin(Date.now() / 300) * 5 + 35; // Pulsa entre 30 e 40 pixels
+			ctx.beginPath();
+			ctx.arc(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2, pulse, 0, Math.PI * 2);
+			ctx.stroke();
+			
+			// Desenhar linha para a predição da IA (se disponível)
+			const ultraPrediction = getBestUltraPreciseAIPrediction(enemy, 10);
+			if (ultraPrediction && ultraPrediction.predictedPosition) {
+				ctx.strokeStyle = '#c77dff'; // Roxo mais claro para a linha
+				ctx.lineWidth = 2;
+				ctx.setLineDash([5, 5]); // Linha tracejada
+				ctx.beginPath();
+				ctx.moveTo(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2);
+				ctx.lineTo(ultraPrediction.predictedPosition.x, ultraPrediction.predictedPosition.y);
+				ctx.stroke();
+				ctx.setLineDash([]); // Resetar linha tracejada
+				
+				// Desenhar círculo na posição prevista
+				ctx.fillStyle = 'rgba(199, 125, 255, 0.3)'; // Roxo translúcido
+				ctx.beginPath();
+				ctx.arc(ultraPrediction.predictedPosition.x, ultraPrediction.predictedPosition.y, 8, 0, Math.PI * 2);
+				ctx.fill();
+			}
+			
+			ctx.restore();
+		}
+		
+		drawEnemy(ctx, enemy);
+		
+			// Inimigo atira no player com IA ULTRA EXTREMAMENTE INSANA
+			if (updateResult && updateResult.shouldShoot) {
+				const bulletSpeed = 10; // AUMENTADO de 8 para 10 - projéteis ULTRA rápidos
+				
+				// === USAR IA ULTRA PRECISA PARA MIRA ABSURDAMENTE SUPREMA ===
+				let angle;
+				let aimMethod = 'ultra_precise'; // Método de mira utilizado
+				let aiConfidence = 0;
+				
+				// Tentar usar predição da IA ULTRA PRECISA primeiro
+				const ultraPrediction = getBestUltraPreciseAIPrediction(enemy, bulletSpeed);
+				
+				if (ultraPrediction && ultraPrediction.confidence > 0.75) {
+					// IA ULTRA PRECISA - Mira na predição do ensemble neural
+					angle = Math.atan2(
+						ultraPrediction.position.y - (enemy.y + enemy.size/2),
+						ultraPrediction.position.x - (enemy.x + enemy.size/2)
+					);
+					aimMethod = ultraPrediction.isEnsemble ? 'ultra_ensemble' : 'ultra_neural';
+					aiConfidence = ultraPrediction.confidence;
+					
+					// Log de alta precisão
+					if (ultraPrediction.confidence > 0.95) {
+						console.log(`🎯 ULTRA PRECISÃO: ${(ultraPrediction.confidence * 100).toFixed(1)}% confiança, ensemble: ${ultraPrediction.ensembleSize || 1} sistemas`);
+					}
+				} else {
+					// Fallback para sistema avançado existente
+					angle = calculateAdvancedPredictiveAngle(
+						enemy.x + enemy.size/2,  // posição X do inimigo
+						enemy.y + enemy.size/2,  // posição Y do inimigo
+						player,                   // objeto completo do player com histórico
+						bulletSpeed,              // velocidade do projétil
+						updateResult.aimAccuracy  // precisão do inimigo (98-99%)
+					);
+					aimMethod = 'advanced_fallback';
+					aiConfidence = updateResult.aimAccuracy;
+				}
+				
+				// === APLICAR MODO ULTRA INSANIDADE ===
+				const ultraInsanityMode = true; // SEMPRE ATIVO
+				if (ultraInsanityMode && aiConfidence > 0.8) {
+					// Ajuste final para AIMBOT LITERALMENTE ULTRA INSANO
+					const finalAccuracy = Math.min(aiConfidence * 1.2, 0.9999); // Até 99.99%
+					
+					// Micro-ajuste baseado na confiança da IA
+					const microAdjustment = (Math.random() - 0.5) * (1 - finalAccuracy) * 0.1;
+					angle += microAdjustment;
+				}
+				
+				const bullet = createBullet(
+					enemy.x + enemy.size/2,
+					enemy.y + enemy.size/2,
+					angle,
+					bulletSpeed, // velocidade ULTRA AUMENTADA
+					18, // tamanho menor para tiros ultra rápidos
+					enemy.damage,
+					true, // marcar como tiro de inimigo
+					enemy.type // tipo do inimigo que atirou
+				);
+				
+				// Marcar método de mira no projétil (para debug e visualização)
+				bullet.aimMethod = aimMethod;
+				bullet.aiConfidence = aiConfidence;
+				bullet.ultraPrecision = aiConfidence > 0.9;
+				
+				bullets.push(bullet);
+			}
+		
+		// Verificar pulso paralisante dos Phantoms
+		if ((enemy.type === 'phantom' || enemy.type === 'phantomlord') && enemy.pulseActivated) {
+			const dx = player.x + player.size/2 - (enemy.x + enemy.size/2);
+			const dy = player.y + player.size/2 - (enemy.y + enemy.size/2);
+			const distance = Math.sqrt(dx*dx + dy*dy);
+			
+			if (distance <= enemy.pulseRadius) {
+				// Aplicar dano e paralisia
+				takeDamage(enemy.pulseDamage, enemy.type);
+				const paralyzed = paralyzePlayer(enemy, enemy.type === 'phantomlord' ? 3000 : 2000); // Phantom Lord paralisa por mais tempo
+				if (paralyzed) {
+					console.log(`🚫 ${enemy.type === 'phantomlord' ? 'Phantom Lord' : 'Phantom'} aplicou pulso paralisante!`);
+				}
+			}
+			
+			// Resetar o pulso após aplicação
+			enemy.pulseActivated = false;
+		}
+		
+		// Verificar colisão com player (colisão direta)
+		const collision = checkEnemyCollision(enemy, player);
+		if (collision) {
+			if (enemy.type === 'phantom') {
+				// Phantom paralisa o jogador em vez de causar dano direto
+				const paralyzed = paralyzePlayer(enemy, 2000); // 2 segundos
+				if (paralyzed) {
+					console.log('🚫 Phantom paralisou o jogador por contato direto!');
+				}
+			} else if (enemy.type === 'phantomlord') {
+				// Phantom Lord causa dano e paralisia por contato
+				takeDamage(enemy.damage, enemy.type);
+				const paralyzed = paralyzePlayer(enemy, 3000); // 3 segundos
+				if (paralyzed) {
+					console.log('🚫 Phantom Lord paralisou o jogador por contato direto!');
+				}
+			} else if (enemy.type === 'shard' || enemy.type === 'minishard') {
+				// Shards causam dano através da barreira de cristais
+				if (collision.type === 'barrier') {
+					takeDamage(enemy.damage, enemy.type);
+					console.log(`💎 ${enemy.type} causou dano com barreira de cristais!`);
+				} else if (collision.type === 'body') {
+					takeDamage(enemy.damage * 1.5, enemy.type); // Dano extra por contato direto
+					console.log(`💎 ${enemy.type} causou dano direto (contato corporal)!`);
+				}
+			} else if (enemy.type === 'crystalcore') {
+				// Crystal Core causa dano alto por contato direto
+				takeDamage(enemy.damage * 2, enemy.type); // Dano dobrado por ser boss
+				console.log('💎 Crystal Core causou dano por contato direto!');
+			} else {
+				// Outros inimigos causam dano normal
+				takeDamage(enemy.damage, enemy.type);
+			}
+		}
+		
+		// === VERIFICAR COLISÃO COM FEIXES DE LUZ DO CRYSTAL CORE ===
+		if (enemy.type === 'crystalcore' && enemy.activeBeams && enemy.activeBeams.length > 0) {
+			const playerCenterX = player.x + player.size/2;
+			const playerCenterY = player.y + player.size/2;
+			
+			enemy.activeBeams.forEach(beam => {
+				// Calcular se o player está na área do feixe
+				const dx = playerCenterX - beam.x;
+				const dy = playerCenterY - beam.y;
+				
+				// Converter coordenadas do player para o sistema do feixe (rotacionado)
+				const cosAngle = Math.cos(-beam.angle);
+				const sinAngle = Math.sin(-beam.angle);
+				const rotatedX = dx * cosAngle - dy * sinAngle;
+				const rotatedY = dx * sinAngle + dy * cosAngle;
+				
+				// Verificar se está dentro do retângulo do feixe
+				if (rotatedX >= 0 && rotatedX <= beam.length && 
+					Math.abs(rotatedY) <= beam.width/2) {
+					
+					// Player foi atingido pelo feixe!
+					if (!beam.hasHitPlayer) { // Evitar dano múltiplo do mesmo feixe
+						beam.hasHitPlayer = true;
+						takeDamage(beam.damage, 'crystalcore');
+						console.log('⚡ Crystal Core - Player atingido por feixe de luz!');
+					}
+				}
+			});
+		}
+		
+		// === VERIFICAR COLISÃO COM ULTRA RAYS DO RED PHANTOM CORE ===
+		if (enemy.type === 'redphantomcore' && enemy.activeUltraRays && enemy.activeUltraRays.length > 0) {
+			const playerCenterX = player.x + player.size/2;
+			const playerCenterY = player.y + player.size/2;
+			
+			enemy.activeUltraRays.forEach(ray => {
+				// Calcular se o player está na área do Ultra Ray
+				const dx = playerCenterX - ray.x;
+				const dy = playerCenterY - ray.y;
+				
+				// Converter coordenadas do player para o sistema do ray (rotacionado)
+				const cosAngle = Math.cos(-ray.angle);
+				const sinAngle = Math.sin(-ray.angle);
+				const rotatedX = dx * cosAngle - dy * sinAngle;
+				const rotatedY = dx * sinAngle + dy * cosAngle;
+				
+				// Verificar se está dentro do retângulo do Ultra Ray
+				if (rotatedX >= 0 && rotatedX <= ray.length && 
+					Math.abs(rotatedY) <= ray.width/2) {
+					
+					// Player foi atingido pelo Ultra Ray devastador!
+					if (!ray.hasHitPlayer) { // Evitar dano múltiplo do mesmo ray
+						ray.hasHitPlayer = true;
+						takeDamage(ray.damage, 'redphantomcore');
+						console.log('💀 Red Phantom Core - Player atingido por ULTRA RAY CARMESIM!');
+					}
+				}
+			});
+		}
+		
+		// === VERIFICAR COLISÃO COM ULTRA RAYS DAS ILUSÕES ===
+		if (enemy.type === 'redphantomcore' && enemy.isInDivision && enemy.illusions) {
+			const playerCenterX = player.x + player.size/2;
+			const playerCenterY = player.y + player.size/2;
+			
+			enemy.illusions.forEach(illusion => {
+				if (illusion.ultraRay) {
+					const ray = illusion.ultraRay;
+					const rayAge = Date.now() - ray.startTime;
+					
+					// Só causar dano se o Ultra Ray ainda está ativo
+					if (rayAge < ray.duration) {
+						const dx = playerCenterX - ray.x;
+						const dy = playerCenterY - ray.y;
+						
+						const cosAngle = Math.cos(-ray.angle);
+						const sinAngle = Math.sin(-ray.angle);
+						const rotatedX = dx * cosAngle - dy * sinAngle;
+						const rotatedY = dx * sinAngle + dy * cosAngle;
+						
+						if (rotatedX >= 0 && rotatedX <= ray.length && 
+							Math.abs(rotatedY) <= ray.width/2) {
+							
+							if (!ray.hasHitPlayer) {
+								ray.hasHitPlayer = true;
+								// Ilusões causam o mesmo dano que o real
+								takeDamage(enemy.damage, 'redphantomcore');
+								console.log('👻 Red Phantom Core ILUSÃO - Player atingido por Ultra Ray ilusório!');
+							}
+						}
+					}
+				}
+			});
 		}
 		
 		// Verificar colisão com bullets do player
@@ -1033,20 +2035,132 @@ function update() {
 			// Tiros de inimigos não atingem inimigos
 			if (bullet.isEnemy) return;
 			
+			// === COLISÃO ESPECIAL COM BARREIRA DE SHARDS ===
+			if ((enemy.type === 'shard' || enemy.type === 'minishard') && !enemy.barrierDestroyed) {
+				// Verificar primeiro se acertou a barreira
+				if (checkBulletBarrierCollision(enemy, bullet)) {
+					bullets.splice(bIndex, 1); // Remove projétil
+					return; // Não verifica colisão com corpo
+				}
+			}
+			
+			// === COLISÃO PADRÃO COM CORPO DO INIMIGO ===
 			const dx = bullet.x - (enemy.x + enemy.size/2);
 			const dy = bullet.y - (enemy.y + enemy.size/2);
 			const distance = Math.sqrt(dx*dx + dy*dy);
 			
 			if (distance < enemy.size/2 + bullet.size/2) {
-				damageEnemy(enemy, bullet.damage);
-				bullets.splice(bIndex, 1);
+				// Tentar causar dano - só remove bala se dano foi aplicado
+				const damageApplied = damageEnemy(enemy, bullet.damage, player);
+				if (damageApplied) {
+					bullets.splice(bIndex, 1);
+				}
 			}
 		});
 	});
 	
+	// === DETECTAR PHANTOM LORD MORTO ===
+	// Verificar se havia um Phantom Lord que morreu neste frame
+	if (currentRoom.hadBoss && currentRoom.hadBossAlive) {
+		// Verificar bosses por andar
+		const hasLivingPhantomLord = enemies.some(enemy => enemy.type === 'phantomlord' && !enemy.dead);
+		const hasLivingCrystalCore = enemies.some(enemy => enemy.type === 'crystalcore' && !enemy.dead);
+		const hasLivingRedPhantomCore = enemies.some(enemy => enemy.type === 'redphantomcore' && !enemy.dead);
+		
+		// Debug: Ver estado dos bosses
+		const phantomLords = enemies.filter(enemy => enemy.type === 'phantomlord');
+		const crystalCores = enemies.filter(enemy => enemy.type === 'crystalcore');
+		const redPhantomCores = enemies.filter(enemy => enemy.type === 'redphantomcore');
+		if (phantomLords.length > 0) {
+			console.log('Phantom Lords na sala:', phantomLords.map(e => `HP: ${e.health}, Dead: ${e.dead}`));
+		}
+		if (crystalCores.length > 0) {
+			console.log('Crystal Cores na sala:', crystalCores.map(e => `HP: ${e.health}, Dead: ${e.dead}`));
+		}
+		if (redPhantomCores.length > 0) {
+			console.log('Red Phantom Cores na sala:', redPhantomCores.map(e => `HP: ${e.health}, Dead: ${e.dead}, Phase: ${e.phase}, Division: ${e.isInDivision}`));
+		}
+		
+		// Verificar se boss foi derrotado
+		if (currentRoom.hadBossAlive) {
+			let bossDefeated = false;
+			let bossName = '';
+			
+			if (currentFloor >= 3) {
+				// Basement 3+: Red Phantom Core
+				if (!hasLivingRedPhantomCore) {
+					bossDefeated = true;
+					bossName = 'RED PHANTOM CORE';
+					currentRoom.redPhantomCoreDefeated = true;
+				}
+			} else if (currentFloor >= 2) {
+				// Basement 2: Crystal Core
+				if (!hasLivingCrystalCore) {
+					bossDefeated = true;
+					bossName = 'CRYSTAL CORE';
+					currentRoom.crystalCoreDefeated = true;
+				}
+			} else {
+				// Basement 1: Phantom Lord
+				if (!hasLivingPhantomLord) {
+					bossDefeated = true;
+					bossName = 'PHANTOM LORD';
+					currentRoom.phantomLordDefeated = true;
+					// Conceder recompensas especiais por derrotar o Phantom Lord
+					grantPhantomLordRewards();
+				}
+			}
+			
+			if (bossDefeated) {
+				currentRoom.hadBossAlive = false;
+				trapdoorSpawned = true;
+				window.bossDefeated = true; // Para compatibilidade global
+				console.log(`🎉 ${bossName} DERROTADO! Trapdoor spawned automaticamente! 🎉`);
+				console.log('Estado: trapdoorSpawned =', trapdoorSpawned, ', bossDefeated =', window.bossDefeated);
+			}
+		}
+	}
+
 	// Verificar se a sala foi limpa (todos os inimigos mortos)
 	if (enemies.length === 0 && !currentRoom.cleared && currentRoom.type !== 'start' && currentRoom.type !== 'treasure') {
 		currentRoom.cleared = true;
+		
+		// === LÓGICA DO PHANTOM LORD E TRAPDOOR ===
+		
+		// Se esta é a sala boss (vermelha) e ainda não tem boss
+		if (currentRoom.type === 'boss' && !currentRoom.hadBoss && !trapdoorSpawned) {
+			if (currentFloor >= 3) {
+				// Basement 3+: Red Phantom Core - CHEFÃO SUPREMO
+				console.log('Sala boss Basement 3+ detectada - spawnando RED PHANTOM CORE!');
+				currentRoom.hadBoss = true;
+				currentRoom.hadBossAlive = true;
+				
+				// Spawn do Red Phantom Core no fundo da sala
+				const redPhantomCoreX = roomWidth / 2 - 60; // Centralizado (tamanho 120)
+				const redPhantomCoreY = 80; // No fundo da arena
+				enemies.push(createEnemy(redPhantomCoreX, redPhantomCoreY, 'redphantomcore'));
+			} else if (currentFloor >= 2) {
+				// Basement 2: Crystal Core boss
+				console.log('Sala boss Basement 2 detectada - spawnando Crystal Core!');
+				currentRoom.hadBoss = true;
+				currentRoom.hadBossAlive = true;
+				
+				// Spawn do Crystal Core no centro da sala
+				const crystalCoreX = roomWidth / 2 - 40; // Centralizado (tamanho 80)
+				const crystalCoreY = roomHeight / 2 - 40;
+				enemies.push(createEnemy(crystalCoreX, crystalCoreY, 'crystalcore'));
+			} else {
+				// Basement 1: Phantom Lord boss
+				console.log('Sala boss Basement 1 detectada - spawnando Phantom Lord!');
+				currentRoom.hadBoss = true;
+				currentRoom.hadBossAlive = true;
+				
+				// Spawn do Phantom Lord no centro da sala
+				const phantomLordX = roomWidth / 2 - 30; // Centralizado (tamanho 60)
+				const phantomLordY = roomHeight / 2 - 30;
+				enemies.push(createEnemy(phantomLordX, phantomLordY, 'phantomlord'));
+			}
+		}
 	}
 
 	// Bullets
@@ -1054,16 +2168,66 @@ function update() {
 		b.x += b.vx;
 		b.y += b.vy;
 		
-		// Cor diferente para tiros de inimigos
+		// Cor diferente para tiros de inimigos com ULTRA PRECISÃO
 		if (b.isEnemy) {
-			// Desenhar tiro de inimigo (círculo vermelho)
-			ctx.fillStyle = '#ff4444';
+			// Desenhar tiro de inimigo com indicação de IA ULTRA PRECISA
+			let bulletColor = '#ff4444';
+			let borderColor = '#880000';
+			let glowColor = null;
+			
+			// Cores especiais baseadas no método de mira ULTRA AVANÇADO
+			if (b.aimMethod === 'ultra_ensemble') {
+				bulletColor = '#ff0080'; // Rosa/magenta para ensemble ultra preciso
+				borderColor = '#880040';
+				glowColor = '#ff80c0'; // Brilho rosa
+			} else if (b.aimMethod === 'ultra_neural') {
+				bulletColor = '#8000ff'; // Roxo para IA neural ultra precisa
+				borderColor = '#400080';
+				glowColor = '#c080ff'; // Brilho roxo
+			} else if (b.aimMethod === 'ultra_precise') {
+				bulletColor = '#00ff80'; // Verde-azul para ultra precisão
+				borderColor = '#008040';
+				glowColor = '#80ffc0'; // Brilho verde-azul
+			}
+			
+			// Efeito de brilho para tiros ultra precisos
+			if (b.ultraPrecision && glowColor) {
+				const glowRadius = b.size * 0.8;
+				const gradient = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, glowRadius);
+				gradient.addColorStop(0, glowColor + '80'); // 50% transparência
+				gradient.addColorStop(1, glowColor + '00'); // Transparente
+				
+				ctx.fillStyle = gradient;
+				ctx.beginPath();
+				ctx.arc(b.x, b.y, glowRadius, 0, Math.PI * 2);
+				ctx.fill();
+			}
+			
+			// Desenhar projétil principal
+			ctx.fillStyle = bulletColor;
 			ctx.beginPath();
 			ctx.arc(b.x, b.y, b.size/2, 0, Math.PI * 2);
 			ctx.fill();
-			ctx.strokeStyle = '#880000';
+			ctx.strokeStyle = borderColor;
 			ctx.lineWidth = 2;
 			ctx.stroke();
+			
+			// Indicador de confiança da IA (núcleo brilhante)
+			if (keys['i'] && b.aiConfidence > 0) {
+				const coreAlpha = Math.pow(b.aiConfidence, 2); // Quadrático para destacar alta confiança
+				ctx.fillStyle = `rgba(255, 255, 255, ${coreAlpha})`;
+				ctx.beginPath();
+				ctx.arc(b.x, b.y, b.size/4, 0, Math.PI * 2);
+				ctx.fill();
+				
+				// Texto de confiança para tiros ultra precisos
+				if (b.aiConfidence > 0.9) {
+					ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+					ctx.font = '8px Arial';
+					ctx.textAlign = 'center';
+					ctx.fillText(`${(b.aiConfidence * 100).toFixed(0)}%`, b.x, b.y - b.size);
+				}
+			}
 			
 			// Verificar colisão com player
 			const dx = b.x - (player.x + player.size/2);
@@ -1071,7 +2235,7 @@ function update() {
 			const distance = Math.sqrt(dx*dx + dy*dy);
 			
 			if (distance < player.size/2 + b.size/2) {
-				takeDamage(b.damage);
+				takeDamage(b.damage, b.enemyType);
 				bullets.splice(i, 1);
 			}
 		} else {
@@ -1152,20 +2316,147 @@ function update() {
 		}
 	}
 	
+	// Debug info para IA ULTRA PRECISA
+	if (keys['i']) {
+		ctx.fillStyle = "lime";
+		ctx.font = "16px Arial";
+		ctx.fillText("IA ULTRA PRECISA DEBUG MODE (hold I)", 10, roomHeight - 60);
+		ctx.fillText(`Predições ativas: ${aiPredictions.length} | Validações: ${aiValidationBuffer.length}`, 10, roomHeight - 40);
+		ctx.fillText(`Precisão atual: ${(aiStats.accuracy * 100).toFixed(2)}% (${aiStats.predictions} predições)`, 10, roomHeight - 20);
+	}
+	
 	// Debug info
 	if (keys['p']) {
 		ctx.fillStyle = "yellow";
 		ctx.font = "16px Arial";
-		ctx.fillText("DEBUG: Press P to spawn trapdoor", 10, roomHeight - 20);
+		ctx.fillText("DEBUG: Press P to spawn trapdoor | T to test phantom limit", 10, roomHeight - 60);
+	}
+	
+	// Debug info trapdoor
+	ctx.fillStyle = trapdoorSpawned ? "#00ff00" : "#ff0000";
+	ctx.font = "14px Arial";
+	ctx.fillText(`Trapdoor: ${trapdoorSpawned ? 'SPAWNED' : 'NOT SPAWNED'} | Boss: ${bossDefeated ? 'DEFEATED' : 'ALIVE'}`, 10, roomHeight - 40);
+	
+	// Debug Boss state
+	if (currentRoom.hadBoss) {
+		if (currentFloor >= 2) {
+			const crystalCores = enemies.filter(e => e.type === 'crystalcore');
+			const alive = crystalCores.filter(e => !e.dead).length;
+			ctx.fillStyle = "#00ffff";
+			ctx.fillText(`Crystal Cores: ${alive} alive, defeated: ${currentRoom.crystalCoreDefeated || false}`, 10, roomHeight - 20);
+		} else {
+			const phantomLords = enemies.filter(e => e.type === 'phantomlord');
+			const alive = phantomLords.filter(e => !e.dead).length;
+			ctx.fillStyle = "#ff00ff";
+			ctx.fillText(`Phantom Lords: ${alive} alive, defeated: ${currentRoom.phantomLordDefeated || false}`, 10, roomHeight - 20);
+		}
+	}
+	
+	// Info sobre inimigos especiais na sala atual
+	if (currentFloor >= 2) {
+		// Basement 2+: Mostrar Shards
+		const currentShards = countLiveShards(enemies);
+		if (currentShards > 0) {
+			ctx.fillStyle = "#87CEEB";
+			ctx.font = "14px Arial";
+			ctx.fillText(`Shards na sala: ${currentShards}/3`, 10, roomHeight - 100);
+		}
+	} else {
+		// Basement 1: Mostrar Phantoms
+		const currentPhantoms = countLivePhantoms();
+		if (currentPhantoms > 0) {
+			ctx.fillStyle = "#9d4edd";
+			ctx.font = "14px Arial";
+			ctx.fillText(`Phantoms na sala: ${currentPhantoms}/2`, 10, roomHeight - 100);
+		}
 	}
 	
 	drawPlayer(ctx, mouseX, mouseY);
 	
+	// === EFEITOS DE PARALIZAÇÃO ===
+	if (player.paralyzed) {
+		// Círculo de paralização ao redor do player
+		const pulseRadius = 30 + Math.sin(Date.now() / 150) * 8;
+		ctx.strokeStyle = '#4169E1';
+		ctx.lineWidth = 4;
+		ctx.setLineDash([10, 5]);
+		ctx.beginPath();
+		ctx.arc(player.x + player.size/2, player.y + player.size/2, pulseRadius, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.setLineDash([]);
+		
+		// Texto de paralização
+		ctx.fillStyle = '#4169E1';
+		ctx.font = 'bold 16px Arial';
+		ctx.textAlign = 'center';
+		ctx.strokeStyle = '#000';
+		ctx.lineWidth = 3;
+		ctx.strokeText('PARALISADO!', player.x + player.size/2, player.y - 15);
+		ctx.fillText('PARALISADO!', player.x + player.size/2, player.y - 15);
+		
+		// Barra de tempo de paralização
+		const timeLeft = Math.max(0, player.paralyzedDuration - (Date.now() - player.paralyzedTime));
+		const timePercent = timeLeft / player.paralyzedDuration;
+		
+		const barWidth = 60;
+		const barHeight = 8;
+		const barX = player.x + player.size/2 - barWidth/2;
+		const barY = player.y + player.size + 10;
+		
+		// Fundo da barra
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+		ctx.fillRect(barX, barY, barWidth, barHeight);
+		
+		// Progresso da paralização
+		ctx.fillStyle = '#4169E1';
+		ctx.fillRect(barX, barY, barWidth * timePercent, barHeight);
+		
+		// Borda da barra
+		ctx.strokeStyle = '#000';
+		ctx.lineWidth = 2;
+		ctx.strokeRect(barX, barY, barWidth, barHeight);
+	}
+	
+	// Desenhar visualização da IA ULTRA PRECISA (se ativada)
+	drawUltraPreciseAIVisualization();
+	
 	// Desenhar minimapa por último (para ficar por cima)
 	drawMinimap();
 	
+	// Renderizar mensagem de kill all (por cima de tudo)
+	renderKillAllMessage(ctx);
+	
 	requestAnimationFrame(update);
 }
+
+// === CONTROLE DO VISUALIZADOR NEURAL ===
+document.addEventListener('keydown', (e) => {
+	// Pressione 'V' para mostrar/ocultar visualizador neural
+	if (e.key === 'v' || e.key === 'V') {
+		neuralViz.toggle();
+	}
+	
+	// Pressione 'Q' para matar todos os inimigos (cheat/debug)
+	if (e.key === 'q' || e.key === 'Q') {
+		if (enemies.length > 0) {
+			const enemyCount = enemies.length;
+			const bossCount = enemies.filter(e => e.type === 'phantomlord' || e.type === 'crystalcore').length;
+			
+			// Matar todos os inimigos instantaneamente
+			enemies.forEach(enemy => {
+				enemy.health = 0;
+				enemy.dead = true;
+			});
+			
+			console.log(`🔥 CHEAT ATIVADO: ${enemyCount} inimigos eliminados! (${bossCount} boss(es) incluído(s))`);
+			
+			// Mostrar mensagem visual temporária
+			showKillAllMessage(enemyCount, bossCount);
+		} else {
+			console.log('⚠️ Nenhum inimigo para eliminar na sala atual');
+		}
+	}
+});
 
 canvas.addEventListener('mousedown', e => {
 	// Verificar se pode atirar (fire rate)
@@ -1186,6 +2477,70 @@ canvas.addEventListener('mousedown', e => {
 		player.damage
 	));
 });
+
+// === FUNÇÃO PARA MOSTRAR MENSAGEM DE KILL ALL ===
+let killAllMessage = null;
+
+function showKillAllMessage(enemyCount, bossCount) {
+	killAllMessage = {
+		text: `🔥 ${enemyCount} INIMIGOS ELIMINADOS! 🔥`,
+		subtext: bossCount > 0 ? `(${bossCount} boss${bossCount > 1 ? 'es' : ''} incluído${bossCount > 1 ? 's' : ''})` : '',
+		startTime: Date.now(),
+		duration: 3000, // 3 segundos
+		alpha: 1.0
+	};
+}
+
+// Função para renderizar a mensagem de kill all
+function renderKillAllMessage(ctx) {
+	if (!killAllMessage) return;
+	
+	const elapsed = Date.now() - killAllMessage.startTime;
+	if (elapsed > killAllMessage.duration) {
+		killAllMessage = null;
+		return;
+	}
+	
+	// Fade out nos últimos 1000ms
+	const fadeStart = killAllMessage.duration - 1000;
+	if (elapsed > fadeStart) {
+		killAllMessage.alpha = 1 - ((elapsed - fadeStart) / 1000);
+	}
+	
+	ctx.save();
+	ctx.globalAlpha = killAllMessage.alpha;
+	
+	// Fundo semi-transparente
+	ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+	ctx.fillRect(0, 0, roomWidth, roomHeight);
+	
+	// Texto principal
+	ctx.fillStyle = '#ff4444';
+	ctx.font = 'bold 48px Arial';
+	ctx.textAlign = 'center';
+	ctx.shadowBlur = 10;
+	ctx.shadowColor = '#ff0000';
+	
+	const centerX = roomWidth / 2;
+	const centerY = roomHeight / 2;
+	
+	ctx.fillText(killAllMessage.text, centerX, centerY - 20);
+	
+	// Subtexto (bosses)
+	if (killAllMessage.subtext) {
+		ctx.fillStyle = '#ffaa00';
+		ctx.font = 'bold 24px Arial';
+		ctx.fillText(killAllMessage.subtext, centerX, centerY + 30);
+	}
+	
+	// Texto de instrução
+	ctx.fillStyle = '#ffffff';
+	ctx.font = '18px Arial';
+	ctx.shadowBlur = 5;
+	ctx.fillText('Pressione Q para usar novamente', centerX, centerY + 80);
+	
+	ctx.restore();
+}
 
 // Inicializar primeira sala
 spawnRoomEnemies();
