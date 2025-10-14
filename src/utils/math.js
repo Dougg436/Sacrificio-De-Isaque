@@ -1,1 +1,0 @@
-// funções matemáticas auxiliares

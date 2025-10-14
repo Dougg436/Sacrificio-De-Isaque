@@ -1686,6 +1686,25 @@ async function update() {
 	} else {
 		keys['phantomTestPressed'] = false;
 	}
+	
+	// Debug: pressionar K para matar todos os inimigos instantaneamente
+	if (keys['k'] || keys['K']) {
+		if (!keys['killAllPressed']) {
+			keys['killAllPressed'] = true;
+			const enemyCount = enemies.filter(e => !e.dead).length;
+			if (enemyCount > 0) {
+				enemies.forEach(enemy => {
+					if (!enemy.dead) {
+						enemy.dead = true;
+						enemy.health = 0;
+					}
+				});
+				console.log(`💀 KILL ALL: ${enemyCount} inimigos eliminados!`);
+			}
+		}
+	} else {
+		keys['killAllPressed'] = false;
+	}
 
 	// Verificar transições de sala
 	checkRoomTransition();
@@ -1798,42 +1817,6 @@ async function update() {
 			} else {
 				console.log('Red Phantom Core tentou invocar reforços, mas limites já atingidos (2 Phantoms, 2 Shards)');
 			}
-		}
-		
-		// Desenhar aura roxa ao redor do inimigo rastreado pela IA
-		if (enemy === targetEnemy) {
-			ctx.save();
-			ctx.strokeStyle = '#9d4edd'; // Roxo vibrante
-			ctx.shadowBlur = 20;
-			ctx.shadowColor = '#9d4edd';
-			ctx.lineWidth = 3;
-			
-			// Desenhar círculo pulsante ao redor do inimigo
-			const pulse = Math.sin(Date.now() / 300) * 5 + 35; // Pulsa entre 30 e 40 pixels
-			ctx.beginPath();
-			ctx.arc(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2, pulse, 0, Math.PI * 2);
-			ctx.stroke();
-			
-			// Desenhar linha para a predição da IA (se disponível)
-			const ultraPrediction = getBestUltraPreciseAIPrediction(enemy, 10);
-			if (ultraPrediction && ultraPrediction.predictedPosition) {
-				ctx.strokeStyle = '#c77dff'; // Roxo mais claro para a linha
-				ctx.lineWidth = 2;
-				ctx.setLineDash([5, 5]); // Linha tracejada
-				ctx.beginPath();
-				ctx.moveTo(enemy.x + enemy.size / 2, enemy.y + enemy.size / 2);
-				ctx.lineTo(ultraPrediction.predictedPosition.x, ultraPrediction.predictedPosition.y);
-				ctx.stroke();
-				ctx.setLineDash([]); // Resetar linha tracejada
-				
-				// Desenhar círculo na posição prevista
-				ctx.fillStyle = 'rgba(199, 125, 255, 0.3)'; // Roxo translúcido
-				ctx.beginPath();
-				ctx.arc(ultraPrediction.predictedPosition.x, ultraPrediction.predictedPosition.y, 8, 0, Math.PI * 2);
-				ctx.fill();
-			}
-			
-			ctx.restore();
 		}
 		
 		drawEnemy(ctx, enemy);

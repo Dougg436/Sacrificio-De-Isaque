@@ -1,1 +1,0 @@
-// placar, vida, etc.

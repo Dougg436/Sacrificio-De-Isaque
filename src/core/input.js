@@ -31,8 +31,14 @@ export let mouseX = 0, mouseY = 0;
 export function setupMouse(canvas) {
 	canvas.addEventListener('mousemove', e => {
 		let rect = canvas.getBoundingClientRect();
-		mouseX = e.clientX - rect.left;
-		mouseY = e.clientY - rect.top;
+		
+		// Calcular escala do canvas (tamanho visual vs tamanho interno)
+		const scaleX = canvas.width / rect.width;
+		const scaleY = canvas.height / rect.height;
+		
+		// Ajustar coordenadas do mouse considerando a escala
+		mouseX = (e.clientX - rect.left) * scaleX;
+		mouseY = (e.clientY - rect.top) * scaleY;
 		
 		// Registrar movimento do mouse no histórico
 		mouseHistory.push({
