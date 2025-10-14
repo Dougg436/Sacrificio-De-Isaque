@@ -7,22 +7,43 @@ import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
 import { MIN_FIRE_RATE, ENEMY_SPAWN_DELAY } from './config.js';
 import { UltraPrecisionEnsembleAI } from './ai/ultra-precision-ensemble.js';
-import { NeuralNetworkVisualizer } from './utils/neural-visualizer.js';
 
-const canvas = document.getElementById('gameScreen');
-const ctx = canvas.getContext('2d');
+// Obter canvas e contexto de forma segura (mostra mensagem visível se não encontrado)
+let canvas = document.getElementById('gameScreen');
+let ctx = canvas ? canvas.getContext('2d') : null;
+
+if (!canvas || !ctx) {
+	// Tentar esperar pelo DOM caso o script tenha sido executado antes do DOM estar pronto
+	document.addEventListener('DOMContentLoaded', () => {
+		canvas = document.getElementById('gameScreen');
+		ctx = canvas ? canvas.getContext('2d') : null;
+		if (!canvas || !ctx) {
+			console.error('❌ Canvas com id "gameScreen" não encontrado. Abra `index.html` ou `game.html` e certifique-se de que o elemento <canvas id="gameScreen"> exista.');
+			// Mostrar overlay de erro para o usuário no navegador
+			try {
+				const overlay = document.createElement('div');
+				overlay.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000c;color:#fff;font-family:Arial, sans-serif;font-size:18px;z-index:99999;padding:20px;text-align:center;';
+				overlay.innerHTML = '<div><strong>Erro:</strong> Canvas <code>gameScreen</code> não encontrado.<br>Abra <code>index.html</code> ou <code>game.html</code> e recarregue (Live Server). Veja o console para detalhes.</div>';
+				document.body.appendChild(overlay);
+			} catch (e) {
+				// nada além de log
+			}
+			return; // Não continuar a execução do jogo
+		}
+		// se encontrado no DOMContentLoaded, podemos continuar normalmente (o restante do módulo já será executado)
+	}, { once: true });
+
+	// Se não encontrado imediatamente, não continue (prevenir exceções ao acessar ctx)
+	if (!canvas || !ctx) throw new Error('Canvas #gameScreen não encontrado - abortando inicialização.');
+}
 
 // === A IA MAIS ABSURDA DO MUNDO ===
 console.log('🚀 INICIALIZANDO SISTEMA DE IA ULTRA PRECISO...');
 const ultraAI = new UltraPrecisionEnsembleAI();
 
 // === VISUALIZADOR NEURAL ===
-console.log('🎨 INICIALIZANDO VISUALIZADOR NEURAL...');
-const neuralViz = new NeuralNetworkVisualizer({
-    width: 280,
-    height: 280,
-    position: 'top-right'
-});
+// Neural visualizer removed to simplify rendering. If you need it later,
+// re-add the module and instantiation in a development branch.
 
 let aiPredictions = [];
 let lastAIUpdateTime = 0;
@@ -192,12 +213,13 @@ async function updateUltraPreciseAIPredictions() {
 			console.log(`🧠 IA ULTRA PRECISA - Predições: ${aiPredictions.length}, Confiança média: ${(avgConfidence * 100).toFixed(1)}%, Sistemas ativos: ${activeSystems}`);
 			
 			// === ATUALIZAR VISUALIZADOR NEURAL ===
-			try {
-				const neuralData = ultraAI.exportNeuralVisualizationData();
-				neuralViz.updateOverlay(neuralData, avgConfidence);
-			} catch (vizError) {
-				console.warn('⚠️ Erro ao atualizar visualizador neural:', vizError);
-			}
+				try {
+					// Visualizer removed. Keep exporting data in case it's used elsewhere.
+					const neuralData = ultraAI.exportNeuralVisualizationData();
+					// If a visualizer is ever reintroduced, it can use neuralData.
+				} catch (vizError) {
+					console.warn('⚠️ Erro ao exportar dados de visualização neural:', vizError);
+				}
 		}
 		
 	} catch (error) {
@@ -1518,6 +1540,9 @@ async function update() {
 	const currentTime = Date.now();
 	deltaTime = (currentTime - lastFrameTime) / 1000; // Converter para segundos
 	lastFrameTime = currentTime;
+
+	// Converter speed definido por frame para um fator temporal (1 = 60 FPS baseline)
+	const frameFactor = Math.min(4, Math.max(0, deltaTime * 60));
 	
 	// Selecionar inimigo alvo para visualização (rotaciona a cada 5 segundos)
 	if (enemies.length > 0) {
@@ -1635,10 +1660,10 @@ async function update() {
 	
 	// Movimento (apenas se não estiver paralisado)
 	if (!player.paralyzed) {
-		if (keys['w']) player.y -= player.speed;
-		if (keys['s']) player.y += player.speed;
-		if (keys['a']) player.x -= player.speed;
-		if (keys['d']) player.x += player.speed;
+		if (keys['w']) player.y -= player.speed * frameFactor;
+		if (keys['s']) player.y += player.speed * frameFactor;
+		if (keys['a']) player.x -= player.speed * frameFactor;
+		if (keys['d']) player.x += player.speed * frameFactor;
 	}
 
 	// Verificar colisões com paredes (deve vir antes das transições)
@@ -2433,7 +2458,7 @@ async function update() {
 document.addEventListener('keydown', (e) => {
 	// Pressione 'V' para mostrar/ocultar visualizador neural
 	if (e.key === 'v' || e.key === 'V') {
-		neuralViz.toggle();
+		// Neural visualizer removed; no action taken. Re-enable if visualizer is restored.
 	}
 	
 	// Pressione 'Q' para matar todos os inimigos (cheat/debug)
