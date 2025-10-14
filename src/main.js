@@ -1,4 +1,4 @@
-import { player, drawPlayer, takeDamage, updatePlayer, canShoot, paralyzePlayer } from './entities/player.js';
+import { player, drawPlayer, takeDamage, updatePlayer, canShoot, paralyzePlayer, grantPhantomLordRewards } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
 import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle, countLiveShards, createMiniShardsFromShard, checkBulletBarrierCollision } from './entities/enemy.js';
@@ -1353,7 +1353,27 @@ function drawHealth() {
 		ctx.fillStyle = '#4169E1';
 		ctx.strokeText(`🚫 PARALISADO: ${secondsLeft}s`, statsX, statsY + 60);
 		ctx.fillText(`🚫 PARALISADO: ${secondsLeft}s`, statsX, statsY + 60);
-	} else {
+	}
+	
+	// Indicadores de recompensas do Phantom Lord
+	if (player.phantomImmunity || player.doubleAttack) {
+		let rewardY = statsY + (player.paralyzed ? 80 : 60);
+		
+		if (player.phantomImmunity) {
+			ctx.fillStyle = '#9932CC';
+			ctx.strokeText(`🛡️ PHANTOM IMMUNITY`, statsX, rewardY);
+			ctx.fillText(`🛡️ PHANTOM IMMUNITY`, statsX, rewardY);
+			rewardY += 20;
+		}
+		
+		if (player.doubleAttack) {
+			ctx.fillStyle = '#FFD700';
+			ctx.strokeText(`⚔️ DOUBLE ATTACK`, statsX, rewardY);
+			ctx.fillText(`⚔️ DOUBLE ATTACK`, statsX, rewardY);
+		}
+	}
+	
+	if (!player.paralyzed) {
 		// Padrão de movimento detectado (DEBUG - pode ser removido)
 		if (player.movementPattern && player.patternConfidence > 0.3) {
 			const patternIcons = {
@@ -1849,7 +1869,8 @@ async function update() {
 					bulletSpeed, // velocidade ULTRA AUMENTADA
 					18, // tamanho menor para tiros ultra rápidos
 					enemy.damage,
-					true // marcar como tiro de inimigo
+					true, // marcar como tiro de inimigo
+					enemy.type // tipo do inimigo que atirou
 				);
 				
 				// Marcar método de mira no projétil (para debug e visualização)
@@ -1868,7 +1889,7 @@ async function update() {
 			
 			if (distance <= enemy.pulseRadius) {
 				// Aplicar dano e paralisia
-				takeDamage(enemy.pulseDamage);
+				takeDamage(enemy.pulseDamage, enemy.type);
 				const paralyzed = paralyzePlayer(enemy, enemy.type === 'phantomlord' ? 3000 : 2000); // Phantom Lord paralisa por mais tempo
 				if (paralyzed) {
 					console.log(`🚫 ${enemy.type === 'phantomlord' ? 'Phantom Lord' : 'Phantom'} aplicou pulso paralisante!`);
@@ -1890,7 +1911,7 @@ async function update() {
 				}
 			} else if (enemy.type === 'phantomlord') {
 				// Phantom Lord causa dano e paralisia por contato
-				takeDamage(enemy.damage);
+				takeDamage(enemy.damage, enemy.type);
 				const paralyzed = paralyzePlayer(enemy, 3000); // 3 segundos
 				if (paralyzed) {
 					console.log('🚫 Phantom Lord paralisou o jogador por contato direto!');
@@ -1898,19 +1919,19 @@ async function update() {
 			} else if (enemy.type === 'shard' || enemy.type === 'minishard') {
 				// Shards causam dano através da barreira de cristais
 				if (collision.type === 'barrier') {
-					takeDamage(enemy.damage);
+					takeDamage(enemy.damage, enemy.type);
 					console.log(`💎 ${enemy.type} causou dano com barreira de cristais!`);
 				} else if (collision.type === 'body') {
-					takeDamage(enemy.damage * 1.5); // Dano extra por contato direto
+					takeDamage(enemy.damage * 1.5, enemy.type); // Dano extra por contato direto
 					console.log(`💎 ${enemy.type} causou dano direto (contato corporal)!`);
 				}
 			} else if (enemy.type === 'crystalcore') {
 				// Crystal Core causa dano alto por contato direto
-				takeDamage(enemy.damage * 2); // Dano dobrado por ser boss
+				takeDamage(enemy.damage * 2, enemy.type); // Dano dobrado por ser boss
 				console.log('💎 Crystal Core causou dano por contato direto!');
 			} else {
 				// Outros inimigos causam dano normal
-				takeDamage(enemy.damage);
+				takeDamage(enemy.damage, enemy.type);
 			}
 		}
 		
@@ -1937,7 +1958,7 @@ async function update() {
 					// Player foi atingido pelo feixe!
 					if (!beam.hasHitPlayer) { // Evitar dano múltiplo do mesmo feixe
 						beam.hasHitPlayer = true;
-						takeDamage(beam.damage);
+						takeDamage(beam.damage, 'crystalcore');
 						console.log('⚡ Crystal Core - Player atingido por feixe de luz!');
 					}
 				}
@@ -1967,7 +1988,7 @@ async function update() {
 					// Player foi atingido pelo Ultra Ray devastador!
 					if (!ray.hasHitPlayer) { // Evitar dano múltiplo do mesmo ray
 						ray.hasHitPlayer = true;
-						takeDamage(ray.damage);
+						takeDamage(ray.damage, 'redphantomcore');
 						console.log('💀 Red Phantom Core - Player atingido por ULTRA RAY CARMESIM!');
 					}
 				}
@@ -2000,7 +2021,7 @@ async function update() {
 							if (!ray.hasHitPlayer) {
 								ray.hasHitPlayer = true;
 								// Ilusões causam o mesmo dano que o real
-								takeDamage(enemy.damage);
+								takeDamage(enemy.damage, 'redphantomcore');
 								console.log('👻 Red Phantom Core ILUSÃO - Player atingido por Ultra Ray ilusório!');
 							}
 						}
@@ -2085,6 +2106,8 @@ async function update() {
 					bossDefeated = true;
 					bossName = 'PHANTOM LORD';
 					currentRoom.phantomLordDefeated = true;
+					// Conceder recompensas especiais por derrotar o Phantom Lord
+					grantPhantomLordRewards();
 				}
 			}
 			
@@ -2212,7 +2235,7 @@ async function update() {
 			const distance = Math.sqrt(dx*dx + dy*dy);
 			
 			if (distance < player.size/2 + b.size/2) {
-				takeDamage(b.damage);
+				takeDamage(b.damage, b.enemyType);
 				bullets.splice(i, 1);
 			}
 		} else {

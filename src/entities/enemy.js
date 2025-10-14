@@ -323,12 +323,12 @@ export function createEnemy(x, y, type = 'fly') {
 		phantomlord: {
 			size: 60, // Maior que inimigos normais (chefão)
 			health: 20, // 20 tiros para derrotar
-			speed: 2.5, // Rápido para um chefão
+			speed: 1.5, // Mais lento para combate mais deliberado
 			damage: 6, // 2x dano base do phantom comum
 			color: '#9932CC', // Roxo escuro intenso (DarkOrchid)
 			behavior: 'phantomlord_hunt', // Comportamento único de chefão
 			shootCooldown: 0,
-			shootInterval: 800, // Rajadas rápidas quando visível
+			shootInterval: 1500, // Intervalos mais longos entre ataques
 			aimAccuracy: 0.95, // Alta precisão de chefão
 			// Propriedades especiais do Phantom Lord
 			isBoss: true, // Flag de chefão
@@ -398,12 +398,12 @@ export function createEnemy(x, y, type = 'fly') {
 		crystalcore: {
 			size: 80, // Grande como um chefão
 			health: 50, // 50 HP - chefão mais acessível
-			speed: 1.8, // Movimento médio, errático
+			speed: 1.2, // Movimento mais lento e deliberado
 			damage: 8, // Dano alto dos feixes de luz
 			color: '#4169E1', // Azul real intenso (RoyalBlue)
 			behavior: 'crystalcore_boss', // Comportamento único de chefão
 			shootCooldown: 0,
-			shootInterval: 4000, // Feixes a cada 4 segundos (mais tempo entre ataques)
+			shootInterval: 6000, // Feixes a cada 6 segundos (ainda mais tempo entre ataques)
 			aimAccuracy: 0, // Feixes são aleatórios
 			// Propriedades especiais do Crystal Core
 			isBoss: true, // Flag de chefão
@@ -416,25 +416,25 @@ export function createEnemy(x, y, type = 'fly') {
 			lastBeamTime: 0, // Timestamp do último feixe
 			warningDuration: 800, // 0.8 segundos de aviso roxo antes do feixe real
 			// Sistema de invocação de Shards
-			shardSummonInterval: 20000, // 20 segundos
+			shardSummonInterval: 25000, // 25 segundos (menos frequente)
 			lastShardSummonTime: 0, // Timestamp da última invocação
 			maxSummonedShards: 2, // 2 Shards por invocação
 			// Movimento errático
 			movementDirection: 0, // Ângulo atual de movimento
 			movementChangeTimer: 0, // Timer para mudança de direção
-			movementChangeInterval: 120, // Mudar direção a cada 2 segundos
+			movementChangeInterval: 180, // Mudar direção a cada 3 segundos (movimento mais lento)
 			crystalPulseIntensity: 1.0, // Intensidade do pulso (baseado na vida)
 			lightTrails: [] // Rastros de luz residuais
 		},
 		redphantomcore: {
 			size: 120, // Ainda maior que Crystal Core - chefão supremo
 			health: 300, // 900 HP divididos entre cópias (300 HP real)
-			speed: 1.2, // Movimento apenas horizontal, mais lento
+			speed: 0.8, // Movimento ainda mais lento e imponente
 			damage: 15, // Dano devastador dos Ultra Rays
 			color: '#DC143C', // Vermelho carmesim intenso
 			behavior: 'redphantomcore_supreme', // Comportamento único supremo
 			shootCooldown: 0,
-			shootInterval: 3000, // Ultra Rays a cada 3 segundos
+			shootInterval: 4500, // Ultra Rays a cada 4.5 segundos (intervalos mais longos)
 			aimAccuracy: 1.0, // Ultra Rays miram no jogador
 			// Propriedades especiais do Red Phantom Core
 			isBoss: true,
@@ -448,14 +448,14 @@ export function createEnemy(x, y, type = 'fly') {
 			lastUltraRayTime: 0, // Timestamp do último Ultra Ray
 			warningDuration: 1000, // 1 segundo de aviso antes do Ultra Ray
 			// Sistema de Divisão Tripla (Ilusão Espectral)
-			divisionInterval: 10000, // Divisão a cada 10 segundos
+			divisionInterval: 14000, // Divisão a cada 14 segundos (mais tempo entre divisões)
 			lastDivisionTime: 0, // Timestamp da última divisão
 			divisionDuration: 8000, // 8 segundos em estado dividido
 			isInDivision: false, // Flag de estado dividido
 			illusions: [], // Array de cópias ilusórias
 			isRealCopy: true, // Flag indicando se é a cópia real
 			// Sistema de Invocação de Reforços
-			reinforcementInterval: 15000, // Reforços a cada 15 segundos
+			reinforcementInterval: 20000, // Reforços a cada 20 segundos (menos frequentes)
 			lastReinforcementTime: 0, // Timestamp da última invocação
 			maxPhantoms: 2, // Máximo 2 Phantoms na arena
 			maxShards: 2, // Máximo 2 Shards na arena

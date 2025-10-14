@@ -40,7 +40,10 @@ export let player = {
 	// Estatísticas de movimento
 	averageSpeed: 0,
 	directionChanges: 0,
-	lastDirectionChange: 0
+	lastDirectionChange: 0,
+	// Recompensas por derrotar Phantom Lord
+	phantomImmunity: false, // Imunidade a dano de phantoms
+	doubleAttack: false // Duplicação de ataque
 };
 
 export function drawPlayer(ctx, mouseX, mouseY) {
@@ -74,8 +77,14 @@ export function drawPlayer(ctx, mouseX, mouseY) {
 	ctx.restore();
 }
 
-export function takeDamage(amount) {
+export function takeDamage(amount, enemyType = null) {
 	if (player.invulnerable) return;
+	
+	// Verificar imunidade a phantoms
+	if (player.phantomImmunity && (enemyType === 'phantom' || enemyType === 'phantomlord')) {
+		console.log('🛡️ Dano de Phantom bloqueado pela imunidade!');
+		return;
+	}
 	
 	player.health -= amount;
 	if (player.health < 0) player.health = 0;
@@ -511,4 +520,14 @@ export function canShoot() {
 		return true;
 	}
 	return false;
+}
+
+// Função para conceder recompensas por derrotar o Phantom Lord
+export function grantPhantomLordRewards() {
+	player.phantomImmunity = true;
+	player.doubleAttack = true;
+	player.damage *= 2; // Duplicar o dano base
+	console.log('🎁 RECOMPENSAS DO PHANTOM LORD CONCEDIDAS!');
+	console.log('✨ Imunidade a dano de Phantoms ativada!');
+	console.log('⚔️ Ataque duplicado! Dano agora:', player.damage);
 }
