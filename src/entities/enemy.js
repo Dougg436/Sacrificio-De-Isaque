@@ -324,7 +324,7 @@ export function createEnemy(x, y, type = 'fly') {
 			size: 60, // Maior que inimigos normais (chefão)
 			health: 20, // 20 tiros para derrotar
 			speed: 1.5, // Mais lento para combate mais deliberado
-			damage: 6, // 2x dano base do phantom comum
+			damage: 2, // 1 coração completo (ajustado de 6 para 2)
 			color: '#9932CC', // Roxo escuro intenso (DarkOrchid)
 			behavior: 'phantomlord_hunt', // Comportamento único de chefão
 			shootCooldown: 0,
@@ -399,7 +399,7 @@ export function createEnemy(x, y, type = 'fly') {
 			size: 80, // Grande como um chefão
 			health: 50, // 50 HP - chefão mais acessível
 			speed: 1.2, // Movimento mais lento e deliberado
-			damage: 8, // Dano alto dos feixes de luz
+			damage: 2, // 1 coração completo (ajustado de 8 para 2)
 			color: '#4169E1', // Azul real intenso (RoyalBlue)
 			behavior: 'crystalcore_boss', // Comportamento único de chefão
 			shootCooldown: 0,
@@ -430,7 +430,7 @@ export function createEnemy(x, y, type = 'fly') {
 			size: 120, // Ainda maior que Crystal Core - chefão supremo
 			health: 300, // 900 HP divididos entre cópias (300 HP real)
 			speed: 0.8, // Movimento ainda mais lento e imponente
-			damage: 15, // Dano devastador dos Ultra Rays
+			damage: 2, // 1 coração completo (ajustado de 15 para 2)
 			color: '#DC143C', // Vermelho carmesim intenso
 			behavior: 'redphantomcore_supreme', // Comportamento único supremo
 			shootCooldown: 0,

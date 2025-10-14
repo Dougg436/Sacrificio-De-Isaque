@@ -3,7 +3,7 @@ import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
 import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle, countLiveShards, createMiniShardsFromShard, checkBulletBarrierCollision } from './entities/enemy.js';
 import { keys, setupKeyboard, mouseX, mouseY, setupMouse, updateFrame, recordInputSnapshot, getRecentInputSequence, inputHistory } from './core/input.js';
-import { playerImg, bulletImg } from './core/assets.js';
+import { playerImg, bulletImg, bossBattleMusic, dieSound, playlist } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
 import { MIN_FIRE_RATE, ENEMY_SPAWN_DELAY } from './config.js';
 import { UltraPrecisionEnsembleAI } from './ai/ultra-precision-ensemble.js';
@@ -502,6 +502,125 @@ let gameState = 'playing'; // 'playing', 'transition', 'victory', 'paused'
 let currentFloor = 1;
 let bossDefeated = false;
 let trapdoorSpawned = false;
+let gameOverTriggered = false; // Flag para evitar múltiplos game overs
+let gameOverTimer = 0; // Timer para controlar o delay do game over
+let gameOverDelay = 90; // 90 frames (1.5 segundos a 60fps)
+
+// Sistema de música de boss
+let bossMusicPlaying = false;
+let currentBossType = null; // Armazena o tipo do boss atual (phantomlord, crystalcore, redphantomcore)
+
+// Sistema de playlist de música de fundo
+let currentTrackIndex = 0;
+let playlistPlaying = false;
+let playlistPausedForBoss = false; // Flag para saber se pausou por causa de boss
+
+// Função para tocar música de boss
+function playBossMusic() {
+	if (!bossMusicPlaying) {
+		// Pausar playlist se estiver tocando
+		if (playlistPlaying) {
+			pausePlaylist(true); // true = pausado por boss
+		}
+		
+		bossBattleMusic.currentTime = 0; // Reiniciar música do início
+		bossBattleMusic.play().catch(error => {
+			console.warn('Erro ao tocar música de boss:', error);
+		});
+		bossMusicPlaying = true;
+		console.log('🎵 Música de boss iniciada!');
+	}
+}
+
+// Função para parar música de boss
+function stopBossMusic() {
+	if (bossMusicPlaying) {
+		bossBattleMusic.pause();
+		bossBattleMusic.currentTime = 0;
+		bossMusicPlaying = false;
+		currentBossType = null;
+		console.log('🎵 Música de boss parada!');
+		
+		// Retomar playlist se ela estava pausada por boss
+		if (playlistPausedForBoss) {
+			resumePlaylist();
+		}
+	}
+}
+
+// Função para iniciar a playlist
+function startPlaylist() {
+	if (playlistPlaying || playlist.length === 0) return;
+	
+	// Embaralhar a ordem das músicas (shuffle)
+	currentTrackIndex = Math.floor(Math.random() * playlist.length);
+	
+	playCurrentTrack();
+	playlistPlaying = true;
+	console.log('🎵 Playlist iniciada!');
+}
+
+// Função para tocar a música atual
+function playCurrentTrack() {
+	if (playlist.length === 0) return;
+	
+	const currentTrack = playlist[currentTrackIndex];
+	
+	// Configurar evento para tocar próxima música quando terminar
+	currentTrack.onended = () => {
+		playNextTrack();
+	};
+	
+	currentTrack.play().catch(error => {
+		console.warn(`Erro ao tocar música ${currentTrackIndex + 1}:`, error);
+		// Tentar próxima música se der erro
+		playNextTrack();
+	});
+	
+	console.log(`🎵 Tocando música ${currentTrackIndex + 1}/10`);
+}
+
+// Função para tocar próxima música
+function playNextTrack() {
+	if (!playlistPlaying) return;
+	
+	// Parar música atual
+	const currentTrack = playlist[currentTrackIndex];
+	currentTrack.pause();
+	currentTrack.currentTime = 0;
+	
+	// Avançar para próxima música (com wrap around)
+	currentTrackIndex = (currentTrackIndex + 1) % playlist.length;
+	
+	// Tocar próxima
+	playCurrentTrack();
+}
+
+// Função para pausar playlist
+function pausePlaylist(pausedForBoss = false) {
+	if (!playlistPlaying) return;
+	
+	const currentTrack = playlist[currentTrackIndex];
+	currentTrack.pause();
+	playlistPlaying = false;
+	playlistPausedForBoss = pausedForBoss;
+	console.log('🎵 Playlist pausada' + (pausedForBoss ? ' (boss battle)' : ''));
+}
+
+// Função para retomar playlist
+function resumePlaylist() {
+	if (playlistPlaying || bossMusicPlaying) return;
+	
+	const currentTrack = playlist[currentTrackIndex];
+	currentTrack.play().catch(error => {
+		console.warn('Erro ao retomar playlist:', error);
+		// Se der erro, tentar próxima música
+		playNextTrack();
+	});
+	playlistPlaying = true;
+	playlistPausedForBoss = false;
+	console.log('🎵 Playlist retomada');
+}
 
 // Tamanho da sala no canvas
 const roomWidth = canvas.width;
@@ -530,6 +649,86 @@ let deltaTime = 0;
 
 setupKeyboard();
 setupMouse(canvas);
+
+// Função para resetar o jogo ao estado inicial
+function resetGame() {
+	console.log('🔄 Resetando jogo...');
+	
+	try {
+		// === PARAR MÚSICA DE BOSS ===
+		stopBossMusic();
+		
+		// === RETOMAR PLAYLIST ===
+		if (!playlistPlaying) {
+			resumePlaylist();
+		}
+		
+		// Resetar vida do player
+		player.health = player.maxHealth;
+		player.invulnerable = false;
+		player.invulnerableTime = 0;
+		player.paralyzed = false;
+		player.paralyzedTime = 0;
+		player.paralyzedBy = null;
+		
+		// Resetar posição do player
+		player.x = roomWidth / 2 - player.size / 2;
+		player.y = roomHeight / 2 - player.size / 2;
+		player.previousX = player.x;
+		player.previousY = player.y;
+		player.velocityX = 0;
+		player.velocityY = 0;
+		player.previousVelocityX = 0;
+		player.previousVelocityY = 0;
+		player.accelerationX = 0;
+		player.accelerationY = 0;
+		player.movementHistory = [];
+		player.movementPattern = 'random';
+		player.patternConfidence = 0;
+		
+		// Resetar stats do player
+		player.damage = 1;
+		player.phantomImmunity = false;
+		player.doubleAttack = false;
+		
+		console.log('✅ Player resetado');
+		
+		// Gerar novo dungeon
+		const newDungeon = generateDungeon({
+			seed: Date.now(),
+			width: 5,
+			height: 5,
+			targetRooms: 8
+		});
+		Object.assign(dungeon, newDungeon);
+		currentRoom = dungeon.start;
+		
+		console.log('✅ Dungeon regenerado');
+		
+		// Resetar estados do jogo
+		currentFloor = 1;
+		bossDefeated = false;
+		trapdoorSpawned = false;
+		gameOverTriggered = false; // Resetar flag de game over
+		
+		// Limpar arrays
+		bullets.length = 0;
+		powerUps.length = 0;
+		enemies.length = 0;
+		
+		console.log('✅ Arrays limpos');
+		
+		// Resetar estado do jogo
+		gameState = 'playing';
+		
+		// Spawnar inimigos da nova sala inicial
+		spawnRoomEnemies();
+		
+		console.log('✅ Jogo resetado com sucesso! Vida:', player.health, 'Inimigos:', enemies.length);
+	} catch (error) {
+		console.error('❌ Erro ao resetar jogo:', error);
+	}
+}
 
 // Sistema de persistência de estado das salas
 function saveRoomState() {
@@ -812,6 +1011,25 @@ function spawnRoomEnemies() {
 		const y = roomHeight / 2;
 		spawnPowerUp(x, y);
 	}
+	
+	// === DETECTAR BOSS E TOCAR MÚSICA ===
+	const hasBoss = enemies.some(enemy => 
+		enemy.type === 'phantomlord' || 
+		enemy.type === 'crystalcore' || 
+		enemy.type === 'redphantomcore'
+	);
+	
+	if (hasBoss && !bossMusicPlaying) {
+		// Encontrar o tipo do boss
+		const boss = enemies.find(enemy => 
+			enemy.type === 'phantomlord' || 
+			enemy.type === 'crystalcore' || 
+			enemy.type === 'redphantomcore'
+		);
+		currentBossType = boss.type;
+		playBossMusic();
+		console.log(`🎵 Boss detectado: ${currentBossType}!`);
+	}
 }
 
 function spawnPowerUp(px, py) {
@@ -1012,6 +1230,19 @@ function checkRoomTransition() {
 	
 	// Verificar se há inimigos vivos na sala atual
 	const hasEnemies = enemies.length > 0;
+	
+	// === VERIFICAR SE DEVE PARAR MÚSICA DE BOSS AO MUDAR DE SALA ===
+	// Se estava tocando música e não há mais boss vivo, parar
+	if (bossMusicPlaying) {
+		const hasBoss = enemies.some(enemy => 
+			enemy.type === 'phantomlord' || 
+			enemy.type === 'crystalcore' || 
+			enemy.type === 'redphantomcore'
+		);
+		if (!hasBoss) {
+			stopBossMusic();
+		}
+	}
 	
 	// Porta Norte - só transita se estiver dentro da área da porta
 	if (currentRoom.doors.N && player.y < 0) {
@@ -1934,8 +2165,8 @@ async function update() {
 					console.log(`💎 ${enemy.type} causou dano direto (contato corporal)!`);
 				}
 			} else if (enemy.type === 'crystalcore') {
-				// Crystal Core causa dano alto por contato direto
-				takeDamage(enemy.damage * 2, enemy.type); // Dano dobrado por ser boss
+				// Crystal Core causa dano por contato direto
+				takeDamage(enemy.damage, enemy.type);
 				console.log('💎 Crystal Core causou dano por contato direto!');
 			} else {
 				// Outros inimigos causam dano normal
@@ -2125,6 +2356,9 @@ async function update() {
 				window.bossDefeated = true; // Para compatibilidade global
 				console.log(`🎉 ${bossName} DERROTADO! Trapdoor spawned automaticamente! 🎉`);
 				console.log('Estado: trapdoorSpawned =', trapdoorSpawned, ', bossDefeated =', window.bossDefeated);
+				
+				// === PARAR MÚSICA DE BOSS ===
+				stopBossMusic();
 			}
 		}
 	}
@@ -2147,6 +2381,10 @@ async function update() {
 				const redPhantomCoreX = roomWidth / 2 - 60; // Centralizado (tamanho 120)
 				const redPhantomCoreY = 80; // No fundo da arena
 				enemies.push(createEnemy(redPhantomCoreX, redPhantomCoreY, 'redphantomcore'));
+				
+				// === TOCAR MÚSICA DE BOSS ===
+				currentBossType = 'redphantomcore';
+				playBossMusic();
 			} else if (currentFloor >= 2) {
 				// Basement 2: Crystal Core boss
 				console.log('Sala boss Basement 2 detectada - spawnando Crystal Core!');
@@ -2157,6 +2395,10 @@ async function update() {
 				const crystalCoreX = roomWidth / 2 - 40; // Centralizado (tamanho 80)
 				const crystalCoreY = roomHeight / 2 - 40;
 				enemies.push(createEnemy(crystalCoreX, crystalCoreY, 'crystalcore'));
+				
+				// === TOCAR MÚSICA DE BOSS ===
+				currentBossType = 'crystalcore';
+				playBossMusic();
 			} else {
 				// Basement 1: Phantom Lord boss
 				console.log('Sala boss Basement 1 detectada - spawnando Phantom Lord!');
@@ -2167,6 +2409,10 @@ async function update() {
 				const phantomLordX = roomWidth / 2 - 30; // Centralizado (tamanho 60)
 				const phantomLordY = roomHeight / 2 - 30;
 				enemies.push(createEnemy(phantomLordX, phantomLordY, 'phantomlord'));
+				
+				// === TOCAR MÚSICA DE BOSS ===
+				currentBossType = 'phantomlord';
+				playBossMusic();
 			}
 		}
 	}
@@ -2293,6 +2539,49 @@ async function update() {
 			}
 		}
 	});
+
+	// Verificar Game Over
+	if (player.health <= 0 && !gameOverTriggered) {
+		gameOverTriggered = true; // Marcar como acionado
+		
+		// === PARAR MÚSICA DE BOSS E PLAYLIST ===
+		stopBossMusic();
+		pausePlaylist(false); // Pausar playlist
+		
+		// === TOCAR SOM DE MORTE ===
+		try {
+			dieSound.currentTime = 0; // Reiniciar do início
+			dieSound.play().catch(e => console.log('Não foi possível tocar som de morte:', e));
+		} catch (e) {
+			console.log('Erro ao tocar som de morte:', e);
+		}
+		
+		console.log('💀 GAME OVER - Vida zerada!');
+		
+		// Resetar o jogo após um pequeno delay
+		setTimeout(() => {
+			resetGame();
+		}, 1500); // 1.5 segundos de delay para o jogador ver o que aconteceu
+	}
+	
+	// Desenhar tela de game over se necessário
+	if (player.health <= 0) {
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		
+		ctx.fillStyle = '#ff0000';
+		ctx.font = 'bold 72px Arial';
+		ctx.textAlign = 'center';
+		ctx.fillText('GAME OVER', roomWidth / 2, roomHeight / 2 - 40);
+		
+		ctx.fillStyle = '#ffffff';
+		ctx.font = '32px Arial';
+		ctx.fillText('Reiniciando...', roomWidth / 2, roomHeight / 2 + 40);
+		
+		ctx.textAlign = 'left'; // Reset alinhamento
+		
+		return; // Não continuar o resto da renderização
+	}
 
 	ctx.font = "45px Arial";
 	ctx.fillStyle = "white";
@@ -2552,6 +2841,14 @@ function renderKillAllMessage(ctx) {
 
 // Inicializar primeira sala
 spawnRoomEnemies();
+
+// === INICIAR PLAYLIST DE MÚSICA DE FUNDO ===
+// Esperar interação do usuário para começar a tocar (política de autoplay dos navegadores)
+document.addEventListener('click', () => {
+	if (!playlistPlaying && !bossMusicPlaying) {
+		startPlaylist();
+	}
+}, { once: true }); // Executar apenas uma vez
 
 playerImg.onload = () => update();
 
