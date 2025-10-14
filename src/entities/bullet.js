@@ -1,5 +1,5 @@
 // entidade bullet
-export function createBullet(x, y, angle, speed, size, damage, isEnemy = false, enemyType = null) {
+export function createBullet(x, y, angle, speed, size, damage, isEnemy = false) {
 	return {
 		x,
 		y,
@@ -7,7 +7,6 @@ export function createBullet(x, y, angle, speed, size, damage, isEnemy = false, 
 		vy: Math.sin(angle) * speed,
 		size,
 		damage,
-		isEnemy, // se true, é tiro de inimigo
-		enemyType // tipo do inimigo que atirou (para imunidades)
+		isEnemy // se true, é tiro de inimigo
 	};
 }
