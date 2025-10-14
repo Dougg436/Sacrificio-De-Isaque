@@ -1686,6 +1686,25 @@ async function update() {
 	} else {
 		keys['phantomTestPressed'] = false;
 	}
+	
+	// Debug: pressionar K para matar todos os inimigos instantaneamente
+	if (keys['k'] || keys['K']) {
+		if (!keys['killAllPressed']) {
+			keys['killAllPressed'] = true;
+			const enemyCount = enemies.filter(e => !e.dead).length;
+			if (enemyCount > 0) {
+				enemies.forEach(enemy => {
+					if (!enemy.dead) {
+						enemy.dead = true;
+						enemy.health = 0;
+					}
+				});
+				console.log(`💀 KILL ALL: ${enemyCount} inimigos eliminados!`);
+			}
+		}
+	} else {
+		keys['killAllPressed'] = false;
+	}
 
 	// Verificar transições de sala
 	checkRoomTransition();
