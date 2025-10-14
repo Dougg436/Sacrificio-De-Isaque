@@ -1,7 +1,7 @@
 import { player, drawPlayer, takeDamage, updatePlayer, canShoot, paralyzePlayer } from './entities/player.js';
 import { createBullet } from './entities/bullet.js';
 import { createPowerUp } from './entities/powerup.js';
-import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle } from './entities/enemy.js';
+import { createEnemy, updateEnemy, drawEnemy, checkEnemyCollision, damageEnemy, calculateAdvancedPredictiveAngle, countLiveShards, createMiniShardsFromShard, checkBulletBarrierCollision } from './entities/enemy.js';
 import { keys, setupKeyboard, mouseX, mouseY, setupMouse, updateFrame, recordInputSnapshot, getRecentInputSequence, inputHistory } from './core/input.js';
 import { playerImg, bulletImg } from './core/assets.js';
 import { generateDungeon } from './systems/dungeon-gen.js';
@@ -738,19 +738,41 @@ function spawnRoomEnemies() {
 	// Spawnar inimigos baseado na sala atual
 	if (currentRoom.type !== 'start' && currentRoom.type !== 'treasure') {
 		const enemyCount = currentRoom.type === 'boss' ? 0 : Math.floor(Math.random() * 4) + 4; // 4-7 inimigos
-		const enemyTypes = ['fly', 'spider', 'shooter', 'phantom'];
+		
+		// === SISTEMA DE ANDARES: PHANTOMS vs SHARDS vs RED PHANTOM CORE ===
+		let enemyTypes;
+		if (currentFloor >= 3) {
+			// Basement 3+: Phantoms e Shards combinados (preparação para Red Phantom Core)
+			enemyTypes = ['phantom', 'shard'];
+		} else if (currentFloor >= 2) {
+			// Basement 2: Apenas Shards (sem Phantoms)
+			enemyTypes = ['fly', 'spider', 'shooter', 'shard'];
+		} else {
+			// Basement 1: Sistema original com Phantoms
+			enemyTypes = ['fly', 'spider', 'shooter', 'phantom'];
+		}
 		
 		for (let i = 0; i < enemyCount; i++) {
 			const x = Math.random() * (roomWidth - 200) + 100;
 			const y = Math.random() * (roomHeight - 200) + 100;
 			let type = enemyTypes[Math.floor(Math.random() * enemyTypes.length)];
 			
-			// === LIMITAÇÃO DE PHANTOMS: MÁXIMO 2 POR SALA ===
-			if (type === 'phantom' && countLivePhantoms() >= 2) {
-				// Se já tem 2 ou mais Phantoms, escolher outro tipo aleatório
-				const nonPhantomTypes = ['fly', 'spider', 'shooter'];
-				type = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
-				console.log('Phantom spawn blocked - limit reached. Spawning', type, 'instead.');
+			if (currentFloor >= 2) {
+				// === LIMITAÇÃO DE SHARDS: MÁXIMO 3 POR SALA ===
+				if (type === 'shard' && countLiveShards(enemies) >= 3) {
+					// Se já tem 3 ou mais Shards, escolher outro tipo aleatório
+					const nonShardTypes = ['fly', 'spider', 'shooter'];
+					type = nonShardTypes[Math.floor(Math.random() * nonShardTypes.length)];
+					console.log('Shard spawn blocked - limit reached (3/3). Spawning', type, 'instead.');
+				}
+			} else {
+				// === LIMITAÇÃO DE PHANTOMS: MÁXIMO 2 POR SALA ===
+				if (type === 'phantom' && countLivePhantoms() >= 2) {
+					// Se já tem 2 ou mais Phantoms, escolher outro tipo aleatório
+					const nonPhantomTypes = ['fly', 'spider', 'shooter'];
+					type = nonPhantomTypes[Math.floor(Math.random() * nonPhantomTypes.length)];
+					console.log('Phantom spawn blocked - limit reached (2/2). Spawning', type, 'instead.');
+				}
 			}
 			
 			enemies.push(createEnemy(x, y, type));
@@ -1185,8 +1207,8 @@ function drawRoom() {
 		}
 	}
 	
-	// Desenhar trapdoor se boss foi derrotado e estamos na sala do boss
-	if (bossDefeated && currentRoom.type === 'boss') {
+	// Desenhar trapdoor se Phantom Lord foi derrotado
+	if (trapdoorSpawned) {
 		const trapdoorSize = 60;
 		const trapdoorX = roomWidth / 2 - trapdoorSize / 2;
 		const trapdoorY = roomHeight / 2 - trapdoorSize / 2;
@@ -1631,12 +1653,107 @@ async function update() {
 	// Atualizar e desenhar inimigos
 	enemies.forEach((enemy, index) => {
 		if (enemy.dead) {
-			// Remover inimigo morto após um tempo
+			// === DIVISÃO DE SHARDS ===
+			if (enemy.shouldDivide && enemy.type === 'shard') {
+				// Criar Mini Shards apenas se não exceder o limite total
+				const currentShardCount = countLiveShards(enemies);
+				if (currentShardCount + 2 <= 3) { // +2 porque vai criar 2 Mini Shards
+					const miniShards = createMiniShardsFromShard(enemy);
+					enemies.push(...miniShards);
+					console.log(`💎 Shard dividiu! Shards atuais: ${currentShardCount + 2}/3`);
+				} else {
+					console.log('💎 Divisão bloqueada - limite de Shards atingido (3/3)');
+				}
+			}
+			
+			// Remover inimigo morto
 			enemies.splice(index, 1);
 			return;
 		}
 		
 		const updateResult = updateEnemy(enemy, player, roomWidth, roomHeight);
+		
+		// === INVOCAÇÃO DE SHARDS PELO CRYSTAL CORE ===
+		if (enemy.type === 'crystalcore' && enemy.shouldSummonShards) {
+			enemy.shouldSummonShards = false; // Reset flag
+			
+			// Verificar quantos Shards existem na sala
+			const currentShardCount = countLiveShards(enemies);
+			const maxShards = 2; // Crystal Core pode ter até 2 Shards ao mesmo tempo
+			const shardsToCreate = Math.min(2, maxShards - currentShardCount);
+			
+			if (shardsToCreate > 0) {
+				for (let i = 0; i < shardsToCreate; i++) {
+					// Posição aleatória próxima ao Crystal Core
+					const angle = Math.random() * Math.PI * 2;
+					const distance = 80 + Math.random() * 40; // 80-120px de distância
+					const shardX = enemy.x + Math.cos(angle) * distance;
+					const shardY = enemy.y + Math.sin(angle) * distance;
+					
+					// Garantir que está dentro da sala
+					const clampedX = Math.max(20, Math.min(roomWidth - 20 - 32, shardX));
+					const clampedY = Math.max(20, Math.min(roomHeight - 20 - 32, shardY));
+					
+					const newShard = createEnemy(clampedX, clampedY, 'shard');
+					newShard.canAttack = true; // Pode atacar imediatamente
+					enemies.push(newShard);
+				}
+				console.log(`Crystal Core invocou ${shardsToCreate} Shard(s)! Total na sala: ${currentShardCount + shardsToCreate}`);
+			} else {
+				console.log('Crystal Core tentou invocar Shards, mas já há o máximo (2) na sala');
+			}
+		}
+		
+		// === INVOCAÇÃO DE REFORÇOS PELO RED PHANTOM CORE ===
+		if (enemy.type === 'redphantomcore' && enemy.shouldSummonReinforcements) {
+			enemy.shouldSummonReinforcements = false; // Reset flag
+			
+			// Contar inimigos existentes
+			const currentPhantoms = enemies.filter(e => e.type === 'phantom' && !e.dead).length;
+			const currentShards = countLiveShards(enemies);
+			
+			const phantomsToCreate = Math.min(enemy.maxPhantoms - currentPhantoms, 2);
+			const shardsToCreate = Math.min(enemy.maxShards - currentShards, 2);
+			
+			// Invocar Phantoms
+			for (let i = 0; i < phantomsToCreate; i++) {
+				const angle = Math.random() * Math.PI * 2;
+				const distance = 150 + Math.random() * 100; // 150-250px de distância
+				const phantomX = enemy.x + Math.cos(angle) * distance;
+				const phantomY = enemy.y + Math.sin(angle) * distance;
+				
+				// Garantir que está dentro da sala
+				const clampedX = Math.max(20, Math.min(roomWidth - 20 - 32, phantomX));
+				const clampedY = Math.max(20, Math.min(roomHeight - 20 - 32, phantomY));
+				
+				const newPhantom = createEnemy(clampedX, clampedY, 'phantom');
+				newPhantom.canAttack = true; // Pode atacar imediatamente
+				enemies.push(newPhantom);
+			}
+			
+			// Invocar Shards
+			for (let i = 0; i < shardsToCreate; i++) {
+				const angle = Math.random() * Math.PI * 2;
+				const distance = 120 + Math.random() * 80; // 120-200px de distância
+				const shardX = enemy.x + Math.cos(angle) * distance;
+				const shardY = enemy.y + Math.sin(angle) * distance;
+				
+				// Garantir que está dentro da sala
+				const clampedX = Math.max(20, Math.min(roomWidth - 20 - 32, shardX));
+				const clampedY = Math.max(20, Math.min(roomHeight - 20 - 32, shardY));
+				
+				const newShard = createEnemy(clampedX, clampedY, 'shard');
+				newShard.canAttack = true; // Pode atacar imediatamente
+				enemies.push(newShard);
+			}
+			
+			const totalSummoned = phantomsToCreate + shardsToCreate;
+			if (totalSummoned > 0) {
+				console.log(`Red Phantom Core invocou ${phantomsToCreate} Phantom(s) e ${shardsToCreate} Shard(s)! Total: ${totalSummoned} reforços`);
+			} else {
+				console.log('Red Phantom Core tentou invocar reforços, mas limites já atingidos (2 Phantoms, 2 Shards)');
+			}
+		}
 		
 		// Desenhar aura roxa ao redor do inimigo rastreado pela IA
 		if (enemy === targetEnemy) {
@@ -1743,18 +1860,153 @@ async function update() {
 				bullets.push(bullet);
 			}
 		
-		// Verificar colisão com player
-		if (checkEnemyCollision(enemy, player)) {
+		// Verificar pulso paralisante dos Phantoms
+		if ((enemy.type === 'phantom' || enemy.type === 'phantomlord') && enemy.pulseActivated) {
+			const dx = player.x + player.size/2 - (enemy.x + enemy.size/2);
+			const dy = player.y + player.size/2 - (enemy.y + enemy.size/2);
+			const distance = Math.sqrt(dx*dx + dy*dy);
+			
+			if (distance <= enemy.pulseRadius) {
+				// Aplicar dano e paralisia
+				takeDamage(enemy.pulseDamage);
+				const paralyzed = paralyzePlayer(enemy, enemy.type === 'phantomlord' ? 3000 : 2000); // Phantom Lord paralisa por mais tempo
+				if (paralyzed) {
+					console.log(`🚫 ${enemy.type === 'phantomlord' ? 'Phantom Lord' : 'Phantom'} aplicou pulso paralisante!`);
+				}
+			}
+			
+			// Resetar o pulso após aplicação
+			enemy.pulseActivated = false;
+		}
+		
+		// Verificar colisão com player (colisão direta)
+		const collision = checkEnemyCollision(enemy, player);
+		if (collision) {
 			if (enemy.type === 'phantom') {
 				// Phantom paralisa o jogador em vez de causar dano direto
 				const paralyzed = paralyzePlayer(enemy, 2000); // 2 segundos
 				if (paralyzed) {
-					console.log('🚫 Phantom paralisou o jogador!');
+					console.log('🚫 Phantom paralisou o jogador por contato direto!');
 				}
+			} else if (enemy.type === 'phantomlord') {
+				// Phantom Lord causa dano e paralisia por contato
+				takeDamage(enemy.damage);
+				const paralyzed = paralyzePlayer(enemy, 3000); // 3 segundos
+				if (paralyzed) {
+					console.log('🚫 Phantom Lord paralisou o jogador por contato direto!');
+				}
+			} else if (enemy.type === 'shard' || enemy.type === 'minishard') {
+				// Shards causam dano através da barreira de cristais
+				if (collision.type === 'barrier') {
+					takeDamage(enemy.damage);
+					console.log(`💎 ${enemy.type} causou dano com barreira de cristais!`);
+				} else if (collision.type === 'body') {
+					takeDamage(enemy.damage * 1.5); // Dano extra por contato direto
+					console.log(`💎 ${enemy.type} causou dano direto (contato corporal)!`);
+				}
+			} else if (enemy.type === 'crystalcore') {
+				// Crystal Core causa dano alto por contato direto
+				takeDamage(enemy.damage * 2); // Dano dobrado por ser boss
+				console.log('💎 Crystal Core causou dano por contato direto!');
 			} else {
 				// Outros inimigos causam dano normal
 				takeDamage(enemy.damage);
 			}
+		}
+		
+		// === VERIFICAR COLISÃO COM FEIXES DE LUZ DO CRYSTAL CORE ===
+		if (enemy.type === 'crystalcore' && enemy.activeBeams && enemy.activeBeams.length > 0) {
+			const playerCenterX = player.x + player.size/2;
+			const playerCenterY = player.y + player.size/2;
+			
+			enemy.activeBeams.forEach(beam => {
+				// Calcular se o player está na área do feixe
+				const dx = playerCenterX - beam.x;
+				const dy = playerCenterY - beam.y;
+				
+				// Converter coordenadas do player para o sistema do feixe (rotacionado)
+				const cosAngle = Math.cos(-beam.angle);
+				const sinAngle = Math.sin(-beam.angle);
+				const rotatedX = dx * cosAngle - dy * sinAngle;
+				const rotatedY = dx * sinAngle + dy * cosAngle;
+				
+				// Verificar se está dentro do retângulo do feixe
+				if (rotatedX >= 0 && rotatedX <= beam.length && 
+					Math.abs(rotatedY) <= beam.width/2) {
+					
+					// Player foi atingido pelo feixe!
+					if (!beam.hasHitPlayer) { // Evitar dano múltiplo do mesmo feixe
+						beam.hasHitPlayer = true;
+						takeDamage(beam.damage);
+						console.log('⚡ Crystal Core - Player atingido por feixe de luz!');
+					}
+				}
+			});
+		}
+		
+		// === VERIFICAR COLISÃO COM ULTRA RAYS DO RED PHANTOM CORE ===
+		if (enemy.type === 'redphantomcore' && enemy.activeUltraRays && enemy.activeUltraRays.length > 0) {
+			const playerCenterX = player.x + player.size/2;
+			const playerCenterY = player.y + player.size/2;
+			
+			enemy.activeUltraRays.forEach(ray => {
+				// Calcular se o player está na área do Ultra Ray
+				const dx = playerCenterX - ray.x;
+				const dy = playerCenterY - ray.y;
+				
+				// Converter coordenadas do player para o sistema do ray (rotacionado)
+				const cosAngle = Math.cos(-ray.angle);
+				const sinAngle = Math.sin(-ray.angle);
+				const rotatedX = dx * cosAngle - dy * sinAngle;
+				const rotatedY = dx * sinAngle + dy * cosAngle;
+				
+				// Verificar se está dentro do retângulo do Ultra Ray
+				if (rotatedX >= 0 && rotatedX <= ray.length && 
+					Math.abs(rotatedY) <= ray.width/2) {
+					
+					// Player foi atingido pelo Ultra Ray devastador!
+					if (!ray.hasHitPlayer) { // Evitar dano múltiplo do mesmo ray
+						ray.hasHitPlayer = true;
+						takeDamage(ray.damage);
+						console.log('💀 Red Phantom Core - Player atingido por ULTRA RAY CARMESIM!');
+					}
+				}
+			});
+		}
+		
+		// === VERIFICAR COLISÃO COM ULTRA RAYS DAS ILUSÕES ===
+		if (enemy.type === 'redphantomcore' && enemy.isInDivision && enemy.illusions) {
+			const playerCenterX = player.x + player.size/2;
+			const playerCenterY = player.y + player.size/2;
+			
+			enemy.illusions.forEach(illusion => {
+				if (illusion.ultraRay) {
+					const ray = illusion.ultraRay;
+					const rayAge = Date.now() - ray.startTime;
+					
+					// Só causar dano se o Ultra Ray ainda está ativo
+					if (rayAge < ray.duration) {
+						const dx = playerCenterX - ray.x;
+						const dy = playerCenterY - ray.y;
+						
+						const cosAngle = Math.cos(-ray.angle);
+						const sinAngle = Math.sin(-ray.angle);
+						const rotatedX = dx * cosAngle - dy * sinAngle;
+						const rotatedY = dx * sinAngle + dy * cosAngle;
+						
+						if (rotatedX >= 0 && rotatedX <= ray.length && 
+							Math.abs(rotatedY) <= ray.width/2) {
+							
+							if (!ray.hasHitPlayer) {
+								ray.hasHitPlayer = true;
+								// Ilusões causam o mesmo dano que o real
+								takeDamage(enemy.damage);
+								console.log('👻 Red Phantom Core ILUSÃO - Player atingido por Ultra Ray ilusório!');
+							}
+						}
+					}
+				}
+			});
 		}
 		
 		// Verificar colisão com bullets do player
@@ -1762,6 +2014,16 @@ async function update() {
 			// Tiros de inimigos não atingem inimigos
 			if (bullet.isEnemy) return;
 			
+			// === COLISÃO ESPECIAL COM BARREIRA DE SHARDS ===
+			if ((enemy.type === 'shard' || enemy.type === 'minishard') && !enemy.barrierDestroyed) {
+				// Verificar primeiro se acertou a barreira
+				if (checkBulletBarrierCollision(enemy, bullet)) {
+					bullets.splice(bIndex, 1); // Remove projétil
+					return; // Não verifica colisão com corpo
+				}
+			}
+			
+			// === COLISÃO PADRÃO COM CORPO DO INIMIGO ===
 			const dx = bullet.x - (enemy.x + enemy.size/2);
 			const dy = bullet.y - (enemy.y + enemy.size/2);
 			const distance = Math.sqrt(dx*dx + dy*dy);
@@ -1776,9 +2038,106 @@ async function update() {
 		});
 	});
 	
+	// === DETECTAR PHANTOM LORD MORTO ===
+	// Verificar se havia um Phantom Lord que morreu neste frame
+	if (currentRoom.hadBoss && currentRoom.hadBossAlive) {
+		// Verificar bosses por andar
+		const hasLivingPhantomLord = enemies.some(enemy => enemy.type === 'phantomlord' && !enemy.dead);
+		const hasLivingCrystalCore = enemies.some(enemy => enemy.type === 'crystalcore' && !enemy.dead);
+		const hasLivingRedPhantomCore = enemies.some(enemy => enemy.type === 'redphantomcore' && !enemy.dead);
+		
+		// Debug: Ver estado dos bosses
+		const phantomLords = enemies.filter(enemy => enemy.type === 'phantomlord');
+		const crystalCores = enemies.filter(enemy => enemy.type === 'crystalcore');
+		const redPhantomCores = enemies.filter(enemy => enemy.type === 'redphantomcore');
+		if (phantomLords.length > 0) {
+			console.log('Phantom Lords na sala:', phantomLords.map(e => `HP: ${e.health}, Dead: ${e.dead}`));
+		}
+		if (crystalCores.length > 0) {
+			console.log('Crystal Cores na sala:', crystalCores.map(e => `HP: ${e.health}, Dead: ${e.dead}`));
+		}
+		if (redPhantomCores.length > 0) {
+			console.log('Red Phantom Cores na sala:', redPhantomCores.map(e => `HP: ${e.health}, Dead: ${e.dead}, Phase: ${e.phase}, Division: ${e.isInDivision}`));
+		}
+		
+		// Verificar se boss foi derrotado
+		if (currentRoom.hadBossAlive) {
+			let bossDefeated = false;
+			let bossName = '';
+			
+			if (currentFloor >= 3) {
+				// Basement 3+: Red Phantom Core
+				if (!hasLivingRedPhantomCore) {
+					bossDefeated = true;
+					bossName = 'RED PHANTOM CORE';
+					currentRoom.redPhantomCoreDefeated = true;
+				}
+			} else if (currentFloor >= 2) {
+				// Basement 2: Crystal Core
+				if (!hasLivingCrystalCore) {
+					bossDefeated = true;
+					bossName = 'CRYSTAL CORE';
+					currentRoom.crystalCoreDefeated = true;
+				}
+			} else {
+				// Basement 1: Phantom Lord
+				if (!hasLivingPhantomLord) {
+					bossDefeated = true;
+					bossName = 'PHANTOM LORD';
+					currentRoom.phantomLordDefeated = true;
+				}
+			}
+			
+			if (bossDefeated) {
+				currentRoom.hadBossAlive = false;
+				trapdoorSpawned = true;
+				window.bossDefeated = true; // Para compatibilidade global
+				console.log(`🎉 ${bossName} DERROTADO! Trapdoor spawned automaticamente! 🎉`);
+				console.log('Estado: trapdoorSpawned =', trapdoorSpawned, ', bossDefeated =', window.bossDefeated);
+			}
+		}
+	}
+
 	// Verificar se a sala foi limpa (todos os inimigos mortos)
 	if (enemies.length === 0 && !currentRoom.cleared && currentRoom.type !== 'start' && currentRoom.type !== 'treasure') {
 		currentRoom.cleared = true;
+		
+		// === LÓGICA DO PHANTOM LORD E TRAPDOOR ===
+		
+		// Se esta é a sala boss (vermelha) e ainda não tem boss
+		if (currentRoom.type === 'boss' && !currentRoom.hadBoss && !trapdoorSpawned) {
+			if (currentFloor >= 3) {
+				// Basement 3+: Red Phantom Core - CHEFÃO SUPREMO
+				console.log('Sala boss Basement 3+ detectada - spawnando RED PHANTOM CORE!');
+				currentRoom.hadBoss = true;
+				currentRoom.hadBossAlive = true;
+				
+				// Spawn do Red Phantom Core no fundo da sala
+				const redPhantomCoreX = roomWidth / 2 - 60; // Centralizado (tamanho 120)
+				const redPhantomCoreY = 80; // No fundo da arena
+				enemies.push(createEnemy(redPhantomCoreX, redPhantomCoreY, 'redphantomcore'));
+			} else if (currentFloor >= 2) {
+				// Basement 2: Crystal Core boss
+				console.log('Sala boss Basement 2 detectada - spawnando Crystal Core!');
+				currentRoom.hadBoss = true;
+				currentRoom.hadBossAlive = true;
+				
+				// Spawn do Crystal Core no centro da sala
+				const crystalCoreX = roomWidth / 2 - 40; // Centralizado (tamanho 80)
+				const crystalCoreY = roomHeight / 2 - 40;
+				enemies.push(createEnemy(crystalCoreX, crystalCoreY, 'crystalcore'));
+			} else {
+				// Basement 1: Phantom Lord boss
+				console.log('Sala boss Basement 1 detectada - spawnando Phantom Lord!');
+				currentRoom.hadBoss = true;
+				currentRoom.hadBossAlive = true;
+				
+				// Spawn do Phantom Lord no centro da sala
+				const phantomLordX = roomWidth / 2 - 30; // Centralizado (tamanho 60)
+				const phantomLordY = roomHeight / 2 - 30;
+				enemies.push(createEnemy(phantomLordX, phantomLordY, 'phantomlord'));
+			}
+		}
 	}
 
 	// Bullets
@@ -1950,12 +2309,43 @@ async function update() {
 		ctx.fillText("DEBUG: Press P to spawn trapdoor | T to test phantom limit", 10, roomHeight - 60);
 	}
 	
-	// Info sobre Phantoms na sala atual
-	const currentPhantoms = countLivePhantoms();
-	if (currentPhantoms > 0) {
-		ctx.fillStyle = "#9d4edd";
-		ctx.font = "14px Arial";
-		ctx.fillText(`Phantoms na sala: ${currentPhantoms}/2`, 10, roomHeight - 100);
+	// Debug info trapdoor
+	ctx.fillStyle = trapdoorSpawned ? "#00ff00" : "#ff0000";
+	ctx.font = "14px Arial";
+	ctx.fillText(`Trapdoor: ${trapdoorSpawned ? 'SPAWNED' : 'NOT SPAWNED'} | Boss: ${bossDefeated ? 'DEFEATED' : 'ALIVE'}`, 10, roomHeight - 40);
+	
+	// Debug Boss state
+	if (currentRoom.hadBoss) {
+		if (currentFloor >= 2) {
+			const crystalCores = enemies.filter(e => e.type === 'crystalcore');
+			const alive = crystalCores.filter(e => !e.dead).length;
+			ctx.fillStyle = "#00ffff";
+			ctx.fillText(`Crystal Cores: ${alive} alive, defeated: ${currentRoom.crystalCoreDefeated || false}`, 10, roomHeight - 20);
+		} else {
+			const phantomLords = enemies.filter(e => e.type === 'phantomlord');
+			const alive = phantomLords.filter(e => !e.dead).length;
+			ctx.fillStyle = "#ff00ff";
+			ctx.fillText(`Phantom Lords: ${alive} alive, defeated: ${currentRoom.phantomLordDefeated || false}`, 10, roomHeight - 20);
+		}
+	}
+	
+	// Info sobre inimigos especiais na sala atual
+	if (currentFloor >= 2) {
+		// Basement 2+: Mostrar Shards
+		const currentShards = countLiveShards(enemies);
+		if (currentShards > 0) {
+			ctx.fillStyle = "#87CEEB";
+			ctx.font = "14px Arial";
+			ctx.fillText(`Shards na sala: ${currentShards}/3`, 10, roomHeight - 100);
+		}
+	} else {
+		// Basement 1: Mostrar Phantoms
+		const currentPhantoms = countLivePhantoms();
+		if (currentPhantoms > 0) {
+			ctx.fillStyle = "#9d4edd";
+			ctx.font = "14px Arial";
+			ctx.fillText(`Phantoms na sala: ${currentPhantoms}/2`, 10, roomHeight - 100);
+		}
 	}
 	
 	drawPlayer(ctx, mouseX, mouseY);
@@ -2010,6 +2400,9 @@ async function update() {
 	// Desenhar minimapa por último (para ficar por cima)
 	drawMinimap();
 	
+	// Renderizar mensagem de kill all (por cima de tudo)
+	renderKillAllMessage(ctx);
+	
 	requestAnimationFrame(update);
 }
 
@@ -2018,6 +2411,27 @@ document.addEventListener('keydown', (e) => {
 	// Pressione 'V' para mostrar/ocultar visualizador neural
 	if (e.key === 'v' || e.key === 'V') {
 		neuralViz.toggle();
+	}
+	
+	// Pressione 'Q' para matar todos os inimigos (cheat/debug)
+	if (e.key === 'q' || e.key === 'Q') {
+		if (enemies.length > 0) {
+			const enemyCount = enemies.length;
+			const bossCount = enemies.filter(e => e.type === 'phantomlord' || e.type === 'crystalcore').length;
+			
+			// Matar todos os inimigos instantaneamente
+			enemies.forEach(enemy => {
+				enemy.health = 0;
+				enemy.dead = true;
+			});
+			
+			console.log(`🔥 CHEAT ATIVADO: ${enemyCount} inimigos eliminados! (${bossCount} boss(es) incluído(s))`);
+			
+			// Mostrar mensagem visual temporária
+			showKillAllMessage(enemyCount, bossCount);
+		} else {
+			console.log('⚠️ Nenhum inimigo para eliminar na sala atual');
+		}
 	}
 });
 
@@ -2040,6 +2454,70 @@ canvas.addEventListener('mousedown', e => {
 		player.damage
 	));
 });
+
+// === FUNÇÃO PARA MOSTRAR MENSAGEM DE KILL ALL ===
+let killAllMessage = null;
+
+function showKillAllMessage(enemyCount, bossCount) {
+	killAllMessage = {
+		text: `🔥 ${enemyCount} INIMIGOS ELIMINADOS! 🔥`,
+		subtext: bossCount > 0 ? `(${bossCount} boss${bossCount > 1 ? 'es' : ''} incluído${bossCount > 1 ? 's' : ''})` : '',
+		startTime: Date.now(),
+		duration: 3000, // 3 segundos
+		alpha: 1.0
+	};
+}
+
+// Função para renderizar a mensagem de kill all
+function renderKillAllMessage(ctx) {
+	if (!killAllMessage) return;
+	
+	const elapsed = Date.now() - killAllMessage.startTime;
+	if (elapsed > killAllMessage.duration) {
+		killAllMessage = null;
+		return;
+	}
+	
+	// Fade out nos últimos 1000ms
+	const fadeStart = killAllMessage.duration - 1000;
+	if (elapsed > fadeStart) {
+		killAllMessage.alpha = 1 - ((elapsed - fadeStart) / 1000);
+	}
+	
+	ctx.save();
+	ctx.globalAlpha = killAllMessage.alpha;
+	
+	// Fundo semi-transparente
+	ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+	ctx.fillRect(0, 0, roomWidth, roomHeight);
+	
+	// Texto principal
+	ctx.fillStyle = '#ff4444';
+	ctx.font = 'bold 48px Arial';
+	ctx.textAlign = 'center';
+	ctx.shadowBlur = 10;
+	ctx.shadowColor = '#ff0000';
+	
+	const centerX = roomWidth / 2;
+	const centerY = roomHeight / 2;
+	
+	ctx.fillText(killAllMessage.text, centerX, centerY - 20);
+	
+	// Subtexto (bosses)
+	if (killAllMessage.subtext) {
+		ctx.fillStyle = '#ffaa00';
+		ctx.font = 'bold 24px Arial';
+		ctx.fillText(killAllMessage.subtext, centerX, centerY + 30);
+	}
+	
+	// Texto de instrução
+	ctx.fillStyle = '#ffffff';
+	ctx.font = '18px Arial';
+	ctx.shadowBlur = 5;
+	ctx.fillText('Pressione Q para usar novamente', centerX, centerY + 80);
+	
+	ctx.restore();
+}
 
 // Inicializar primeira sala
 spawnRoomEnemies();
