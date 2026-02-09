@@ -103,7 +103,7 @@ The seeded approach ensures reproducible layouts for testing and debugging.
 3. **Ensemble Prediction**: Each neural network generates independent predictions
 4. **Temporal Analysis**: Identify cyclic patterns and multi-scale trends
 5. **Weighted Voting**: Combine predictions based on historical accuracy
-6. **Confidence Filtering**: Only act on predictions exceeding 95% confidence threshold
+6. **Confidence Filtering**: Only act on high-confidence predictions (default: 95% threshold)
 7. **Continuous Training**: Update networks with actual outcomes for online learning
 
 ## Getting Started
