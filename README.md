@@ -1,10 +1,10 @@
-# Eye Slayer
+# Sacrifício de Isaque
 
 A roguelike bullet-hell game inspired by The Binding of Isaac, featuring procedurally generated dungeons and an absurdly over-engineered AI system that learned to predict player movements with ensemble neural networks.
 
 ## Overview
 
-Eye Slayer is a browser-based action roguelike where players navigate through procedurally generated dungeons, fight increasingly difficult enemies, and face off against challenging bosses. What started as a simple game prototype gradually became an experiment in implementing machine learning directly in the browser using vanilla JavaScript.
+Sacrifício de Isaque is a browser-based action roguelike where players navigate through procedurally generated dungeons, fight increasingly difficult enemies, and face off against challenging bosses. What started as a simple game prototype gradually became an experiment in implementing machine learning directly in the browser using vanilla JavaScript.
 
 The game features real-time combat, multiple enemy types with varying behaviors, power-ups, and a dungeon generation system. Perhaps most notably, it includes an ensemble AI system that combines multiple neural network architectures to predict player movement patterns—because why not?
 
